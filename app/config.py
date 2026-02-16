@@ -1,14 +1,21 @@
 from __future__ import annotations
-import os, json, pathlib, platform, subprocess
-from typing import Dict, Optional
+
+import os
+import pathlib
+import platform
+import socket
+import subprocess
+from typing import Optional, Sequence, Tuple
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "app"
 STATIC_DIR = APP_DIR / "static"
 TARGETS_FILE = APP_DIR / "targets.json"
 
-def env(key: str, default: Optional[str]=None) -> Optional[str]:
+
+def env(key: str, default: Optional[str] = None) -> Optional[str]:
     return os.getenv(key, default)
+
 
 def ping_once(ip: str) -> bool:
     if not ip:
@@ -23,18 +30,40 @@ def ping_once(ip: str) -> bool:
     except Exception:
         return False
 
-def load_targets() -> Dict[str, Dict[str, str]]:
-    # 1) from targets.json if present
-    t: Dict[str, Dict[str, str]] = {}
-    if TARGETS_FILE.exists():
+
+def _parse_ports(raw: Optional[str]) -> Tuple[int, ...]:
+    if not raw:
+        return (3389, 445, 22)
+    ports = []
+    for chunk in raw.split(","):
+        value = chunk.strip()
+        if not value:
+            continue
         try:
-            t = json.loads(TARGETS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            t = {}
-    # 2) merge single-target from env
-    label = env("PC_LABEL")
-    ip = env("PC_IP")
-    mac = env("PC_MAC")
-    if label and (ip or mac):
-        t[label] = {"ip": ip, "mac": mac}
-    return t
+            port = int(value)
+        except ValueError:
+            continue
+        if 1 <= port <= 65535 and port not in ports:
+            ports.append(port)
+    return tuple(ports) if ports else (3389, 445, 22)
+
+
+def tcp_port_open(ip: str, port: int, timeout_sec: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((ip, port), timeout=timeout_sec):
+            return True
+    except OSError:
+        return False
+
+
+def probe_online(ip: str, ports: Optional[Sequence[int]] = None, timeout_sec: float = 1.0) -> bool:
+    if not ip:
+        return False
+    if ping_once(ip):
+        return True
+
+    effective_ports = tuple(ports) if ports is not None else _parse_ports(env("STATUS_TCP_PORTS"))
+    for port in effective_ports:
+        if tcp_port_open(ip, int(port), timeout_sec=timeout_sec):
+            return True
+    return False

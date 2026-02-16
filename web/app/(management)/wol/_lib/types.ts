@@ -35,14 +35,3 @@ export type ToastState = {
   variant: ToastVariant;
   active: boolean;
 };
-
-export type RequestError = Error & {
-  status?: number;
-  payload?: unknown;
-};
-
-export type TargetFormState = {
-  name: string;
-  ip: string;
-  mac: string;
-};

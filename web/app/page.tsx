@@ -1,3 +1,3 @@
 'use client';
 
-export { default } from './(portal)/monitoring/page';
+export { default } from './(management)/wol/page';

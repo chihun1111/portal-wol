@@ -15,9 +15,6 @@
 | --- | --- | --- | --- |
 | LanguageToggle | `web/app/_components/LanguageToggle.tsx` | `btn language-toggle` | Pill-shaped toggle that inherits shared focus/hover behavior while preserving the locale badge look via `.language-toggle` overrides. |
 | PortalDialog Close | `web/app/(management)/wol/_components/PortalDialog.tsx` | `btn secondary portal-dialog__close` | Uses the secondary fill for non-destructive dismissal with tighter padding defined in CSS. |
-| Monitoring Header – Menu Toggle | `web/app/(portal)/monitoring/components/PortalHeader.tsx` | `btn ghost portal-menu-toggle` | Ghost variant keeps the control lightweight; the custom class realigns spacing and background. |
-| Monitoring Header – Refresh | same as above | `btn ghost portal-tabs__button portal-tabs__button--refresh` | Shares the tab button styling but zeroes padding for the icon-sized refresh control. |
-| Monitoring Header – View Tabs | same as above | `btn ghost portal-tabs__button` (+`active` state) | Each tab now participates in the unified hover/focus styling while `.portal-tabs__button.active` signals selection. |
 | Settings / Dialog Actions | Various (`TargetsCard`, `ConfirmDeleteModal`, etc.) | Existing `.btn` combinations | Review new variants here when adding or updating actions. |
 
 ## 3. Styling Overrides / 세부 스타일 조정
@@ -35,4 +32,3 @@
 - Keep Korean translations for user-facing labels inside the localization dictionaries; only class names belong here.
 - During code review, verify that new `<button>` or `<Link>` actions include `.btn` plus the appropriate modifier before merging.
 - Re-run the frontend build after stylistic changes to confirm hashed assets update and commit the source diffs (not the regenerated static bundle unless a release build is required).
-

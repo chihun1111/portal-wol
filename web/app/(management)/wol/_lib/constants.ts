@@ -5,5 +5,3 @@ export const ACTION_ENDPOINTS: Record<PowerAction, string> = {
   shutdown: 'api/shutdown',
   reboot: 'api/reboot'
 };
-
-export const PORTAL_URL = '/';

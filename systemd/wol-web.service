@@ -4,13 +4,12 @@ After=network-online.target tailscaled.service
 Requires=network-online.target
 
 [Service]
-WorkingDirectory=%h/wol-web
-EnvironmentFile=%h/wol-web/.env
-ExecStartPre=%h/wol-web/scripts/build_frontend.sh --skip-install
-ExecStart=%h/wol-web/.venv/bin/uvicorn app.main:create_app --factory --host $HOST --port $PORT
-Restart=always
-User=%i
-Group=%i
+WorkingDirectory=/srv/wol-core
+EnvironmentFile=/srv/wol-core/.env
+ExecStartPre=/srv/wol-core/scripts/build_frontend.sh --skip-install
+ExecStart=/srv/wol-core/.venv/bin/uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
+User=ubuntu
+Group=ubuntu
 
 # Docker Compose 실행과 병행 금지 (포트 충돌)
 # NoNewPrivileges=true

@@ -2,8 +2,8 @@
 
 import type { FormEventHandler } from 'react';
 
-import type { TargetFormState } from '../_lib/types';
 import { useLanguage } from '../../../_i18n/LanguageProvider';
+import type { TargetFormState } from '../../../_lib/targets';
 
 type TargetModalProps = {
   open: boolean;

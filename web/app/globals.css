@@ -1172,12 +1172,3 @@ summary:focus-visible {
 }
 
 /* Utilities ------------------------------------------------------ */
-
-.wol-portal-open {
-  overflow: hidden;
-}
-
-.wol-shell-inert {
-  pointer-events: none;
-  user-select: none;
-}

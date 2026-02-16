@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import socket
 import subprocess
@@ -16,6 +16,8 @@ from .targets import (
 )
 
 CommandType = Union[str, List[str], Dict[str, Any]]
+DEFAULT_COMMAND_TIMEOUT_SEC = 15.0
+_COMMAND_TEMPLATE_KEYS = ("name", "target", "ip", "mac")
 
 
 def trim_text(value: str, limit: int = 4000) -> str:
@@ -23,6 +25,42 @@ def trim_text(value: str, limit: int = 4000) -> str:
     if len(value) <= limit:
         return value
     return value[: max(limit - 3, 0)] + "..."
+
+
+def _command_template_context(target: Dict[str, Any]) -> Dict[str, str]:
+    name = str(target.get("name") or "")
+    ip = str(target.get("ip") or "")
+    mac = str(target.get("mac") or "")
+    return {
+        "name": name,
+        "target": name,
+        "ip": ip,
+        "mac": mac,
+    }
+
+
+def _render_command_value(value: str, context: Dict[str, str]) -> str:
+    rendered = value
+    for key in _COMMAND_TEMPLATE_KEYS:
+        placeholder = "{" + key + "}"
+        if placeholder in rendered:
+            token = context.get(key, "")
+            if not token:
+                raise ValueError(f"placeholder {placeholder} has no value")
+            rendered = rendered.replace(placeholder, token)
+    return rendered
+
+
+def _render_command_with_target(
+    cmd: Union[List[str], str], description: str, target: Dict[str, Any]
+) -> Tuple[Union[List[str], str], str]:
+    context = _command_template_context(target)
+    if isinstance(cmd, list):
+        rendered_cmd = [_render_command_value(item, context) for item in cmd]
+    else:
+        rendered_cmd = _render_command_value(cmd, context)
+    rendered_description = _render_command_value(description, context)
+    return rendered_cmd, rendered_description
 
 
 def normalize_command_spec(spec: CommandType) -> Tuple[Union[List[str], str], bool, Optional[float], str]:
@@ -113,10 +151,15 @@ def execute_target_command(name: str, action: str) -> Dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(400, detail=f"invalid {action} command: {exc}") from exc
     try:
+        cmd, description = _render_command_with_target(cmd, description, target)
+    except ValueError as exc:
+        raise HTTPException(400, detail=f"invalid {action} command: {exc}") from exc
+    effective_timeout = timeout if timeout is not None else DEFAULT_COMMAND_TIMEOUT_SEC
+    try:
         result = subprocess.run(
             cmd,
             shell=use_shell,
-            timeout=timeout,
+            timeout=effective_timeout,
             check=False,
             capture_output=True,
             text=True,
@@ -128,7 +171,7 @@ def execute_target_command(name: str, action: str) -> Dict[str, Any]:
             "from": "api",
             "command": description,
             "error": "timeout",
-            "timeout": timeout,
+            "timeout": effective_timeout,
         })
         raise HTTPException(504, detail=f"{action} command timed out") from exc
     except OSError as exc:

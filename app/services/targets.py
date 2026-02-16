@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import ipaddress
 import json
@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
-from ..config import TARGETS_FILE, env
+from ..config import TARGETS_FILE
 from .logs import log_event
 
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
@@ -60,38 +60,10 @@ def _normalize_mac(mac: Optional[str]) -> Optional[str]:
     return value
 
 
-def _initial_targets_from_env() -> List[Dict[str, Any]]:
-    label = env("PC_LABEL")
-    ip = env("PC_IP")
-    mac = env("PC_MAC")
-    if not label or not ip:
-        return []
-    try:
-        name = _normalize_name(label)
-        addr = _validate_ip(ip)
-        normalized_mac = None
-        try:
-            normalized_mac = _normalize_mac(mac)
-        except HTTPException:
-            normalized_mac = None
-        ts = _now_ts()
-        return [
-            {
-                "name": name,
-                "ip": addr,
-                "mac": normalized_mac,
-                "created_at": ts,
-                "updated_at": ts,
-            }
-        ]
-    except HTTPException:
-        return []
-
-
 def _ensure_file() -> None:
     TARGETS_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not TARGETS_FILE.exists():
-        state = {"targets": _initial_targets_from_env()}
+        state = {"targets": []}
         TARGETS_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -371,4 +343,3 @@ def record_status(name: str, online: bool, ip: Optional[str] = None) -> None:
 
 def record_wake(name: str) -> None:
     _update_runtime(name, last_wake_at=_now_ts())
-

@@ -32,11 +32,6 @@ if (Test-Path $staticDir) {
 New-Item -ItemType Directory -Force -Path $staticDir | Out-Null
 Copy-Item (Join-Path $outDir '*') $staticDir -Recurse
 
-$portalIndex = Join-Path $staticDir "portal/index.html"
-if (Test-Path $portalIndex) {
-  Copy-Item $portalIndex (Join-Path $staticDir "portal.html") -Force
-}
-
 if (Test-Path (Join-Path $staticDir "index.html")) {
   Write-Host "Frontend assets copied to app/static."
 } else {

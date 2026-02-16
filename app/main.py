@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -11,16 +11,19 @@ from .core.settings import get_settings
 load_dotenv()
 
 
+def _mount_static_assets(app: FastAPI) -> None:
+    static_dir = get_settings().static_dir
+    if not static_dir.exists():
+        return
+    app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
+    app.mount("/app/static", StaticFiles(directory=static_dir, html=True), name="static-legacy")
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+
+
 def create_app() -> FastAPI:
-    settings = get_settings()
     app = FastAPI(title="WOL-Web", version="1.0.0")
     app.include_router(router)
-
-    static_dir = settings.static_dir
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
-        app.mount("/app/static", StaticFiles(directory=static_dir, html=True), name="static-app")
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+    _mount_static_assets(app)
     return app
 
 

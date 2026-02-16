@@ -6,24 +6,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBodyClass } from '../../_hooks/useBodyClass';
 import { useTheme } from '../../_hooks/useTheme';
 import { useLanguage } from '../../_i18n/LanguageProvider';
+import { getRequestErrorMessage, request } from '../../_lib/api';
+import { EMPTY_TARGET_FORM, toTargetPayload, type TargetFormState } from '../../_lib/targets';
 import { ConfirmDeleteModal } from './_components/ConfirmDeleteModal';
 import { LogsCard } from './_components/LogsCard';
-import { PortalDialog } from './_components/PortalDialog';
-import { PortalBanner, WolHeader } from './_components/WolHeader';
+import { WolHeader } from './_components/WolHeader';
 import { TargetModal } from './_components/TargetModal';
 import { TargetsCard } from './_components/TargetsCard';
 import { ToastContainer } from './_components/ToastContainer';
 import { useToastQueue } from './_hooks/useToastQueue';
-import { ACTION_ENDPOINTS, PORTAL_URL } from './_lib/constants';
-import { request } from './_lib/api';
-import type {
-  LogEntry,
-  PowerAction,
-  RequestError,
-  Target,
-  TargetFormState,
-  TargetsResponse
-} from './_lib/types';
+import { ACTION_ENDPOINTS } from './_lib/constants';
+import type { LogEntry, PowerAction, Target, TargetsResponse } from './_lib/types';
 
 type RequestOptions = { silent?: boolean };
 
@@ -44,11 +37,10 @@ export default function WolPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [targetModalMode, setTargetModalMode] = useState<'create' | 'edit'>('create');
-  const [targetForm, setTargetForm] = useState<TargetFormState>({ name: '', ip: '', mac: '' });
+  const [targetForm, setTargetForm] = useState<TargetFormState>(EMPTY_TARGET_FORM);
   const [targetError, setTargetError] = useState('');
   const [editingTarget, setEditingTarget] = useState<Target | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<Target | null>(null);
-  const [portalOpen, setPortalOpen] = useState(false);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
   const loadingTargetsRef = useRef(false);
   const statusRefreshingRef = useRef(false);
@@ -134,14 +126,6 @@ export default function WolPage() {
     });
   }, [filter, targets]);
 
-  useEffect(() => {
-    if (portalOpen) {
-      document.body.classList.add('wol-portal-open');
-    } else {
-      document.body.classList.remove('wol-portal-open');
-    }
-  }, [portalOpen]);
-
   const closeTargetModal = useCallback(() => {
     setTargetModalOpen(false);
     setEditingTarget(null);
@@ -149,7 +133,7 @@ export default function WolPage() {
 
   const openCreateModal = useCallback(() => {
     setTargetModalMode('create');
-    setTargetForm({ name: '', ip: '', mac: '' });
+    setTargetForm(EMPTY_TARGET_FORM);
     setTargetError('');
     setEditingTarget(null);
     setTargetModalOpen(true);
@@ -167,8 +151,6 @@ export default function WolPage() {
     setConfirmTarget(target);
   }, []);
 
-  const closePortal = useCallback(() => setPortalOpen(false), []);
-
   useEffect(() => {
     setTargetError('');
   }, [targetModalOpen]);
@@ -176,55 +158,38 @@ export default function WolPage() {
   const handleTargetSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      const name = targetForm.name.trim();
-      const ip = targetForm.ip.trim();
-      const mac = targetForm.mac.trim();
-      if (!name || !ip) {
+      const payload = toTargetPayload(targetForm, {
+        includeEmptyMac: targetModalMode === 'edit'
+      });
+
+      if (!payload) {
         const message = t('wol.toasts.missingFields');
         setTargetError(message);
         return;
       }
-      const payload: Record<string, string> = { name, ip };
-      if (mac || targetModalMode === 'edit') {
-        payload.mac = mac;
-      }
+
       try {
         if (targetModalMode === 'edit' && editingTarget) {
           await request(`api/targets/${encodeURIComponent(editingTarget.name)}`, {
             method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
+            body: payload
           });
           showToast(t('wol.toasts.targetUpdated'), 'success');
         } else {
           await request('api/targets', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
+            body: payload
           });
           showToast(t('wol.toasts.targetAdded'), 'success');
         }
         closeTargetModal();
         setEditingTarget(null);
         setTargetError('');
-        setTargetForm({ name: '', ip: '', mac: '' });
+        setTargetForm(EMPTY_TARGET_FORM);
         await loadTargets({ silent: true });
       } catch (error) {
         console.error(error);
-        const detail = (error as RequestError)?.payload as { detail?: unknown; message?: unknown } | string | undefined;
-        const message =
-          typeof detail === 'string'
-            ? detail
-            : typeof detail?.detail === 'string'
-              ? detail.detail
-              : typeof detail?.message === 'string'
-                ? detail.message
-                : t('wol.toasts.saveFailed');
-        setTargetError(message);
+        setTargetError(getRequestErrorMessage(error, t('wol.toasts.saveFailed')));
       }
     },
     [closeTargetModal, editingTarget, loadTargets, showToast, t, targetForm, targetModalMode]
@@ -271,10 +236,7 @@ export default function WolPage() {
       try {
         await request(path, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ target: target.name })
+          body: { target: target.name }
         });
         const successMessage = t('wol.actions.success', { action: actionLabel, target: target.name });
         updateLog(logId, {
@@ -285,17 +247,8 @@ export default function WolPage() {
         await loadTargets({ silent: true });
       } catch (error) {
         console.error(error);
-        const payload = (error as RequestError)?.payload as { detail?: unknown } | string | undefined;
-        const detail =
-          typeof payload === 'string'
-            ? payload
-            : typeof payload?.detail === 'string'
-              ? payload.detail
-              : typeof payload?.detail === 'object' && payload?.detail !== null && 'error' in (payload.detail as Record<string, unknown>)
-                ? String((payload.detail as Record<string, unknown>).error)
-                : undefined;
         const failureMessage = t('wol.actions.failure', { action: actionLabel });
-        const message = detail || failureMessage;
+        const message = getRequestErrorMessage(error, failureMessage);
         updateLog(logId, {
           status: 'error',
           message
@@ -314,12 +267,10 @@ export default function WolPage() {
         filter={filter}
         onFilterChange={(event) => setFilter(event.target.value)}
         onRefreshStatus={() => refreshStatuses({ log: true })}
-        onOpenPortal={() => setPortalOpen(true)}
         onAddTarget={openCreateModal}
       />
 
       <main className="layout">
-        <PortalBanner />
         <TargetsCard
           targets={targets}
           filteredTargets={filteredTargets}
@@ -344,8 +295,6 @@ export default function WolPage() {
       />
 
       <ConfirmDeleteModal target={confirmTarget} onConfirm={handleDelete} onCancel={() => setConfirmTarget(null)} />
-
-      <PortalDialog open={portalOpen} src={PORTAL_URL} onClose={closePortal} />
     </div>
   );
 }

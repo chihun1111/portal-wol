@@ -2,13 +2,19 @@
   "targets": [
     {
       "name": "mainpc",
-      "ip": "10.10.2.2",
+      "ip": "192.168.123.175",
       "mac": "10:FF:E0:66:47:E9",
       "shutdown": [
         "ssh",
+        "-i",
+        "/srv/wol-core/secrets/wolsvc_ed25519",
         "-o",
         "StrictHostKeyChecking=accept-new",
-        "wolsvc@10.10.2.2",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
+        "wolsvc@{ip}",
         "powershell",
         "-NoProfile",
         "-NonInteractive",
@@ -17,17 +23,23 @@
       ],
       "reboot": [
         "ssh",
+        "-i",
+        "/srv/wol-core/secrets/wolsvc_ed25519",
         "-o",
         "StrictHostKeyChecking=accept-new",
-        "wolsvc@10.10.2.2",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
+        "wolsvc@{ip}",
         "powershell",
         "-NoProfile",
         "-NonInteractive",
         "Restart-Computer",
         "-Force"
       ],
-      "created_at": "2025-09-30T15:28:14+00:00",
-      "updated_at": "2025-09-30T15:28:14+00:00"
+      "created_at": "2025-11-09T04:45:25+00:00",
+      "updated_at": "2025-11-09T04:45:25+00:00"
     }
   ]
 }

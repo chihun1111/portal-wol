@@ -1,13 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
-from ..config import ping_once
+from ..config import probe_online
 from ..core.settings import get_settings
 from ..services.logs import log_event, read_logs
 from ..services.power import execute_target_command, wake_target
@@ -33,6 +33,10 @@ def _static_path(*parts: str) -> Path:
         )
         raise HTTPException(status_code=503, detail=detail)
     return candidate
+
+
+def _serve_exported_page(name: str) -> FileResponse:
+    return FileResponse(_static_path(f"{name}.html"))
 
 
 @router.get("/favicon.ico", include_in_schema=False)
@@ -65,22 +69,29 @@ class TargetUpdateBody(BaseModel):
     mac: Optional[str] = None
 
 
-@router.get("/", response_class=HTMLResponse)
-async def root() -> FileResponse:
-    return FileResponse(_static_path("index.html"))
+@router.get("/", include_in_schema=False)
+async def root_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/wol", status_code=307)
 
 
-@router.get("/portal.html", response_class=HTMLResponse, include_in_schema=False)
-async def portal_html() -> FileResponse:
-    try:
-        return FileResponse(_static_path("portal.html"))
-    except HTTPException:
-        return FileResponse(_static_path("index.html"))
+@router.get("/wol", include_in_schema=False)
+async def wol_page() -> FileResponse:
+    return _serve_exported_page("wol")
+
+
+@router.get("/settings", include_in_schema=False)
+async def settings_page() -> FileResponse:
+    return _serve_exported_page("settings")
 
 
 @router.get("/wol.html", include_in_schema=False)
 async def legacy_wol_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/management/wol", status_code=307)
+    return RedirectResponse(url="/wol", status_code=307)
+
+
+@router.get("/settings.html", include_in_schema=False)
+async def legacy_settings_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/settings", status_code=307)
 
 
 @router.get("/api/targets")
@@ -110,7 +121,7 @@ async def delete_target_api(name: str):
 async def status(target: str, silent: bool = False):
     info = get_target_or_404(target)
     ip = info.get("ip") or ""
-    online = ping_once(ip)
+    online = probe_online(ip)
     record_status(info["name"], online, ip)
     if not silent:
         log_event({"evt": "status", "target": target, "online": online})
@@ -135,4 +146,3 @@ async def reboot(body: TargetActionBody):
 @router.get("/api/logs")
 async def get_logs(limit: int = 200):
     return {"logs": read_logs(limit)}
-
