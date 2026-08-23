@@ -62,6 +62,8 @@ http://127.0.0.1:8000/
 3. [Ubuntu 선택 부팅 SSH 계약](docs/ubuntu-boot-ssh-contract.md)에 따라 OS별 alias와 pinned host key를 구성합니다.
 4. Docker를 시작하고 Tailscale Serve가 도메인 루트에서 localhost 포트를 프록시하도록 설정합니다.
 
+실제 적용은 [Windows 적용 체크리스트](docs/windows-ubuntu-boot-setup-checklist.md)와 [WOL 서버 배포·검증 체크리스트](docs/wol-server-deployment-verification-checklist.md)를 순서대로 사용합니다. Windows 보고서가 `GO`가 되기 전에는 feature flag를 활성화하지 않습니다.
+
 ```bash
 mkdir -p logs data secrets/ssh
 docker compose -f docker/compose.prod.yml up -d --build
