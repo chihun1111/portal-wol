@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBodyClass } from '../../_hooks/useBodyClass';
 import { useTheme } from '../../_hooks/useTheme';
-import { useLanguage } from '../../_i18n/LanguageProvider';
+import { useLanguage, type TranslateFn } from '../../_i18n/LanguageProvider';
 import { getRequestErrorMessage, request } from '../../_lib/api';
 import { EMPTY_TARGET_FORM, toTargetPayload, type TargetFormState } from '../../_lib/targets';
 import { ConfirmDeleteModal } from './_components/ConfirmDeleteModal';
@@ -16,13 +16,76 @@ import { TargetsCard } from './_components/TargetsCard';
 import { ToastContainer } from './_components/ToastContainer';
 import { useToastQueue } from './_hooks/useToastQueue';
 import { ACTION_ENDPOINTS } from './_lib/constants';
-import type { LogEntry, PowerAction, Target, TargetsResponse } from './_lib/types';
+import type { ApiLogRecord, LogEntry, LogsResponse, PowerAction, Target, TargetsResponse } from './_lib/types';
 
 type RequestOptions = { silent?: boolean };
 
 type StatusOptions = { log?: boolean };
 
 const ACTION_LOG_LIMIT = 120;
+const POWER_ACTIONS: readonly PowerAction[] = ['wake', 'shutdown', 'reboot'];
+
+function isPowerAction(value: unknown): value is PowerAction {
+  return typeof value === 'string' && POWER_ACTIONS.includes(value as PowerAction);
+}
+
+function normalizeTimestamp(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    return new Date().toISOString();
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString();
+  }
+  return value;
+}
+
+function toDetailText(value: unknown, limit = 160): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(limit - 3, 0))}...`;
+}
+
+function mapApiLogsToEntries(records: ApiLogRecord[] | undefined, t: TranslateFn): LogEntry[] {
+  if (!Array.isArray(records)) {
+    return [];
+  }
+
+  const mapped: LogEntry[] = [];
+  records.forEach((record, index) => {
+    if (!isPowerAction(record.evt)) {
+      return;
+    }
+    const action = record.evt;
+    const target = typeof record.target === 'string' && record.target.trim() ? record.target.trim() : '-';
+    const actionLabel = t(`wol.actions.labels.${action}`);
+    const failed = (typeof record.rc === 'number' && record.rc !== 0) || Boolean(record.error);
+    const status: LogEntry['status'] = failed ? 'error' : 'success';
+    const baseMessage =
+      status === 'success'
+        ? t('wol.actions.success', { action: actionLabel, target })
+        : t('wol.actions.failure', { action: actionLabel });
+    const detail = toDetailText(record.stderr) ?? toDetailText(record.message) ?? toDetailText(record.error);
+    const message = status === 'error' && detail ? `${baseMessage} (${detail})` : baseMessage;
+    mapped.push({
+      id: `api-${record.ts ?? 'na'}-${action}-${target}-${index}`,
+      timestamp: normalizeTimestamp(record.ts),
+      action,
+      target,
+      status,
+      message
+    });
+  });
+  return mapped.slice(0, ACTION_LOG_LIMIT);
+}
 
 export default function WolPage() {
   useBodyClass('wol-body');
@@ -56,6 +119,22 @@ export default function WolPage() {
   const clearLogs = useCallback(() => {
     setLogs([]);
   }, []);
+
+  const loadLogs = useCallback(async () => {
+    try {
+      const data = await request<LogsResponse>(`api/logs?limit=${ACTION_LOG_LIMIT}`);
+      const persistedLogs = mapApiLogsToEntries(data?.logs, t);
+      setLogs((prev) => {
+        const pendingLogs = prev.filter((entry) => entry.status === 'pending');
+        if (!pendingLogs.length) {
+          return persistedLogs;
+        }
+        return [...pendingLogs, ...persistedLogs].slice(0, ACTION_LOG_LIMIT);
+      });
+    } catch (error) {
+      console.warn('logs load error', error);
+    }
+  }, [t]);
 
   useEffect(() => {
     targetsRef.current = targets;
@@ -105,6 +184,10 @@ export default function WolPage() {
   useEffect(() => {
     loadTargets({ silent: true });
   }, [loadTargets]);
+
+  useEffect(() => {
+    loadLogs();
+  }, [loadLogs]);
 
   useEffect(() => {
     if (!targets.length) {

@@ -16,6 +16,20 @@ export type TargetsResponse = {
   targets?: Target[];
 };
 
+export type ApiLogRecord = {
+  evt?: string;
+  target?: string;
+  ts?: string;
+  rc?: number;
+  error?: string;
+  stderr?: string;
+  message?: string;
+};
+
+export type LogsResponse = {
+  logs?: ApiLogRecord[];
+};
+
 export type LogStatus = 'pending' | 'success' | 'error';
 
 export type LogEntry = {

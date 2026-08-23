@@ -1,6 +1,7 @@
 ﻿[Unit]
 Description=WOL-Web (FastAPI)
 After=network-online.target tailscaled.service
+Wants=tailscaled.service
 Requires=network-online.target
 
 [Service]
@@ -10,6 +11,8 @@ ExecStartPre=/srv/wol-core/scripts/build_frontend.sh --skip-install
 ExecStart=/srv/wol-core/.venv/bin/uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
 User=ubuntu
 Group=ubuntu
+Restart=always
+RestartSec=5s
 
 # Docker Compose 실행과 병행 금지 (포트 충돌)
 # NoNewPrivileges=true

@@ -93,7 +93,7 @@
     },
     "logs": {
       "title": "Action History",
-      "subtitle": "Only commands you trigger from this page are listed.",
+      "subtitle": "Action history is kept for the last 7 days.",
       "clear": "Clear",
       "empty": "No actions yet. Use the controls above to send a command.",
       "status": {
