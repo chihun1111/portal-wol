@@ -1,6 +1,6 @@
 # wol-web    아직 업데이트중입니다
 
-Tailnet 전용 Wake-on-LAN & 전원 제어 대시보드입니다. FastAPI + 정적 프론트엔드로 구성되어 있으며, Docker 또는 systemd 중 하나의 방식으로 구동할 수 있습니다.
+Tailnet 전용 Wake-on-LAN, 전원 제어 및 Ubuntu 일회성 선택 부팅 대시보드입니다. FastAPI + 정적 프론트엔드로 구성되며 운영 환경은 Docker와 Tailscale Serve를 사용합니다.
 
 ## Next.js 프론트엔드(`web/`)
 기존 정적 자바스크립트 UI는 Next.js(App Router) 기반 SPA로 재구성되었습니다. FastAPI 백엔드와 동일한 오리진에서 서비스를 제공하면
@@ -37,8 +37,10 @@ $env:NEXT_PUBLIC_API_BASE = ""
 
 ## 주요 기능
 - Wake / Shutdown / Reboot 명령 API 및 JSONL 로그 기록
+- WOL → Windows SSH → 일회성 Ubuntu BootNext → Ubuntu SSH 확인 작업
 - 타겟(PC) 목록 CRUD, 상태 폴링, Wake 실행을 제공하는 웹 UI
 - MAC 미설정 장비에 대한 자동 학습(ARP 기반, 온라인 상태에서) 및 시각적 안내
+- Tailscale Serve identity 기반 API 보호
 
 ## 빠른 시작 (Windows 개발)
 ```powershell
@@ -55,33 +57,21 @@ http://127.0.0.1:8000/
 
 ## 빠른 시작 (Ubuntu 운영)
 
-### 자동화 스크립트
-```bash
-./scripts/setup_ubuntu.sh --install-systemd
-```
-- Node.js 20.x, Python 3, etherwake 등 필요한 패키지를 설치합니다.
-- `.venv/` 가상환경을 생성하고 `requirements.txt`를 설치합니다.
-- `scripts/build_frontend.sh`를 호출해 Next.js 정적 자산을 `app/static/`으로 동기화합니다.
-- `--install-systemd` 옵션을 주면 `systemd/wol-web.service`를 `/etc/systemd/system/`으로 복사하고 즉시 실행합니다.
-- 기존에 패키지를 설치해 두었으면 `--skip-apt`, 외부 API 주소가 다르면 `--api-base https://foo` 같은 인자를 추가하세요.
-- 필요한 단계마다 `sudo` 권한을 요청하므로 일반 사용자 계정에서 실행하면 됩니다.
-- Windows에서 바로 원격 서버를 준비하려면 `./scripts/setup_ubuntu.sh --remote-host ubuntu@192.168.123.112 --remote-path /opt/wol-web --install-systemd` 처럼 실행하면 저장소가 SSH로 복사되고 원격에서 동일 스크립트가 실행됩니다 (rsync 사용 가능 시 활용, 없으면 tar/ssh로 전송).
+1. `.env.example`을 참고해 `.env`를 준비하되 `UBUNTU_BOOT_ENABLED=false`를 유지합니다.
+2. `logs`, `data`, `secrets/ssh`를 컨테이너 UID/GID가 읽고 쓸 수 있도록 준비합니다.
+3. [Ubuntu 선택 부팅 SSH 계약](docs/ubuntu-boot-ssh-contract.md)에 따라 OS별 alias와 pinned host key를 구성합니다.
+4. Docker를 시작하고 Tailscale Serve가 도메인 루트에서 localhost 포트를 프록시하도록 설정합니다.
 
-### 수동 절차 (참고용)
 ```bash
-sudo apt update
-sudo apt install -y python3-venv python3-pip etherwake
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
-sudo apt install -y nodejs
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-./scripts/build_frontend.sh
-cp .env.example .env  # 환경에 맞게 수정
-sudo cp systemd/wol-web.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now wol-web
-sudo systemctl status wol-web --no-pager
+mkdir -p logs data secrets/ssh
+docker compose -f docker/compose.prod.yml up -d --build
+tailscale serve --bg 8000
+docker compose -f docker/compose.prod.yml ps
 ```
+
+컨테이너는 host network를 사용하지만 FastAPI를 `127.0.0.1:8000`에만 바인딩합니다. LAN 주소나 Tailscale IP의 `:8000`으로 직접 접근하지 말고 Serve가 출력한 HTTPS URL을 사용합니다.
+
+Compose의 `WOL_SSH_DIR`은 새 OS 판별/BootNext SSH 구성을, `WOL_LEGACY_SECRETS_DIR`은 기존 `targets.json` 전원 명령이 참조하는 key 경로를 각각 read-only로 연결합니다. 호스트 경로를 바꾸려면 Compose 실행 전에 두 값을 지정합니다.
 
 ## 환경 변수 (.env)
 | 키 | 설명 |
@@ -94,6 +84,14 @@ sudo systemctl status wol-web --no-pager
 | `LOG_PATH` | JSONL 로그 파일 경로 |
 | `LOG_RETENTION_DAYS`, `LOG_MAX_LIMIT` | 로그 보존 일수 / `/api/logs` 반환 최대 개수 |
 | `NEXT_PUBLIC_API_BASE` | Next.js 빌드 시 API 기본 URL. 동일 오리진이면 빈 문자열 유지 |
+| `UBUNTU_BOOT_ENABLED` | Windows/SSH 수동 검증 후에만 `true`로 변경 (기본 `false`) |
+| `UBUNTU_BOOT_TARGET` | Ubuntu 선택 부팅을 허용할 단일 대상 (기본 `mainpc`) |
+| `WINDOWS_SSH_ALIAS`, `UBUNTU_SSH_ALIAS` | read-only SSH config에 정의한 OS별 alias |
+| `WOL_SSH_CONFIG` | 컨테이너 내부 SSH config 경로 |
+| `BOOT_DB_PATH` | 작업 상태 SQLite 경로 |
+| `WINDOWS_READY_TIMEOUT`, `UBUNTU_READY_TIMEOUT`, `BOOT_JOB_TIMEOUT` | 단계별 및 전체 제한 시간(초) |
+| `BOOT_POLL_INTERVAL`, `SSH_COMMAND_TIMEOUT` | OS 확인 주기와 SSH 명령 제한 시간(초) |
+| `REBOOT_START_TIMEOUT` | Windows가 계속 응답할 때 재부팅 미시작으로 판정하기 전 대기 시간(초) |
 
 `.env.example` 는 Docker/운영 기본값을 참고용으로 제공합니다.
 
@@ -125,35 +123,43 @@ IP를 바꿀 때는 `ip` 필드만 수정하면 되고, 명령에서 `{ip}`, `{n
 | `GET` | `api/status?target=<name>` | 단건 상태 체크 (ping 1회) + MAC 자동 학습 |
 | `POST` | `api/wake` | Wake on LAN 전송 `{ target }` |
 | `POST` | `api/shutdown` / `api/reboot` | 타겟에 설정된 명령 실행 |
+| `POST` | `api/boot/ubuntu` | Ubuntu 부팅 job 생성 (`202`) |
+| `GET` | `api/jobs`, `api/jobs/{id}` | 작업 목록 및 상태 조회 |
+| `POST` | `api/jobs/{id}/cancel` | BootNext 설정 전 작업 취소 |
 | `GET` | `api/logs?limit=N` | 최근 로그 반환 (JSONL 역순)
+| `GET` | `healthz` | localhost 컨테이너 상태 확인 (identity 제외) |
 
-모든 경로는 Tailscale Serve로 `/wol` 서브패스에 배포할 때를 고려하여 **상대경로** (`api/...`, `static/...`)를 사용합니다.
+모든 `api/...` 요청은 Tailscale Serve가 추가하는 `Tailscale-User-Login` header가 필요합니다. 백엔드를 localhost에만 바인딩해야 이 header를 신뢰할 수 있습니다. 포털은 Serve 도메인의 루트 `/`에 배포하며 `NEXT_PUBLIC_API_BASE`는 빈 문자열을 사용합니다.
+
+identity header가 있는 사용자는 모두 허용되므로 해당 장비를 공유받은 외부 Tailscale 사용자도 Tailnet 정책상 Serve에 접근할 수 있다면 포함됩니다. 전원 권한 범위는 Tailscale ACL과 장비 공유 설정에서 제한합니다.
 
 ## 웹 UI 요약
 - 상단 검색창 + “+ 타겟 추가” 버튼으로 빠른 필터링 및 생성
-- 각 행에서 Wake / 편집 / 삭제 버튼 제공, MAC 미설정 시 배지 및 Wake 비활성화
+- 각 행에서 Wake / 종료 / 재부팅 / Ubuntu 부팅 / 편집 / 삭제 버튼 제공
+- Ubuntu 부팅 작업의 단계, 경과 시간, 취소 가능 여부를 2초 간격으로 표시
 - 15초 간격 자동 상태 폴링(수동 새로고침 버튼 제공)
 - 최근 로그 패널에서 100건 단위로 더보기 가능
-- 토큰이 필요한 환경이면 우측 상단 토큰 패널에서 저장 → 모든 fetch 요청에 헤더 자동 첨부
 
-## 운영 모드 선택 (Docker 권장)
-- Docker Compose(prod)를 사용할 경우 `docker compose -f docker/compose.prod.yml up -d`
-  - systemd 서비스가 이미 돌고 있다면 `sudo systemctl disable --now wol-web`
-- systemd 기반으로 운영한다면 Docker Compose는 중단(`docker compose -f docker/compose.prod.yml down`)
-- 두 방식을 동시에 켜면 8000 포트가 충돌합니다.
+## 운영 모드
+
+운영은 Docker Compose만 사용합니다. 기존 systemd 서비스가 있다면 먼저 중지하고 비활성화해야 하며 두 방식을 동시에 실행하지 않습니다. `scripts/setup_ubuntu.sh`와 `systemd/`는 기존 설치 호환용으로만 남아 있고 Ubuntu 선택 부팅 운영 경로가 아닙니다.
 
 ## Docker
 - Linux 서버에서는 host 네트워크 모드 사용 시 브로드캐스트(WOL) 가 동작이 보장됩니다.
 - Windows Docker Desktop은 host 모드가 제한적이므로 개발용으로는 venv 실행을 권장합니다.
-- Next.js 번들이 컨테이너 빌드 단계에서 생성되므로 `NEXT_PUBLIC_API_BASE` 환경변수를 필요에 따라 지정하세요 (기본은 빈 문자열로 동일 오리진 호출).
+- 컨테이너는 비루트 UID/GID로 실행하며 SSH 설정은 read-only로 연결합니다. job DB, 로그와 기존 대상 CRUD에 필요한 `app/targets.json`만 쓰기 가능 볼륨으로 연결합니다.
+- Next.js 번들은 빈 `NEXT_PUBLIC_API_BASE`로 빌드해 Serve HTTPS URL과 동일 오리진을 사용합니다.
 
 ```bash
 docker compose -f docker/compose.prod.yml up -d
 ```
 
+실제 BootNext 기능은 Windows 관리자 BCD 확인, 제한 wrapper와 OS별 SSH 시험을 마친 뒤에만 `.env`의 `UBUNTU_BOOT_ENABLED=true`로 활성화하고 컨테이너를 재생성합니다. 초기 배포와 인증 검증은 반드시 `false` 상태에서 수행합니다.
+
 ## 테스트
 ```bash
 pytest -q
+cd web && npm run lint && npm run build
 ```
 
 ## 프로젝트 구조

@@ -87,6 +87,7 @@
         "wake": "깨우기",
         "shutdown": "종료",
         "reboot": "재부팅",
+        "bootUbuntu": "Ubuntu로 켜기",
         "edit": "편집",
         "delete": "삭제"
       }
@@ -129,6 +130,66 @@
       "delete": "삭제",
       "cancel": "취소"
     },
+    "confirmPower": {
+      "shutdown": {
+        "title": "종료 확인",
+        "message": "{name}을(를) 종료할까요?",
+        "confirm": "종료"
+      },
+      "reboot": {
+        "title": "재부팅 확인",
+        "message": "{name}을(를) 재부팅할까요?",
+        "confirm": "재부팅"
+      },
+      "boot_ubuntu": {
+        "title": "Ubuntu 부팅 확인",
+        "message": "{name}을(를) Ubuntu로 부팅할까요?",
+        "note": "PC가 꺼져 있으면 Windows를 먼저 깨운 뒤 일회성 Ubuntu 부팅을 설정하므로 최대 8분이 걸릴 수 있습니다.",
+        "confirm": "Ubuntu로 켜기"
+      }
+    },
+    "boot": {
+      "title": "{name} Ubuntu 부팅",
+      "elapsed": "경과 시간",
+      "elapsedValue": "{seconds}초",
+      "jobId": "작업 ID",
+      "started": "{target}의 Ubuntu 부팅 작업을 시작했습니다.",
+      "startFailed": "Ubuntu 부팅 작업을 시작하지 못했습니다.",
+      "completed": "{target}이(가) Ubuntu로 부팅되었습니다.",
+      "cancel": "작업 취소",
+      "cancelling": "취소 중…",
+      "cancelled": "Ubuntu 부팅 작업을 취소했습니다.",
+      "cancelFailed": "작업을 취소하지 못했습니다.",
+      "stages": {
+        "queued": "작업 대기 중",
+        "detecting_os": "현재 운영체제 확인 중",
+        "waking": "Wake-on-LAN 전송 중",
+        "waiting_for_windows": "Windows SSH 대기 중",
+        "setting_bootnext": "다음 Ubuntu 부팅 설정 중",
+        "rebooting": "Windows 재부팅 중",
+        "waiting_for_ubuntu": "Ubuntu SSH 대기 중",
+        "succeeded": "Ubuntu 부팅 완료",
+        "failed": "Ubuntu 부팅 실패",
+        "timed_out": "Ubuntu 부팅 시간 초과",
+        "cancelled": "작업 취소됨"
+      },
+      "errors": {
+        "ubuntu_boot_disabled": "Ubuntu 부팅 기능이 아직 활성화되지 않았습니다.",
+        "unsupported_boot_target": "이 대상은 Ubuntu 선택 부팅을 지원하지 않습니다.",
+        "active_boot_job": "이미 진행 중인 Ubuntu 부팅 작업이 있습니다.",
+        "job_not_cancellable": "BootNext 설정이 시작되어 더 이상 취소할 수 없습니다.",
+        "service_restarted": "서비스가 재시작되어 진행 중 작업을 안전하게 중단했습니다.",
+        "wake_failed": "Wake-on-LAN 전송에 실패했습니다.",
+        "windows_not_ready": "제한 시간 안에 Windows SSH가 준비되지 않았습니다.",
+        "job_timeout": "전체 Ubuntu 부팅 제한 시간을 초과했습니다.",
+        "bootnext_set_failed": "Windows에서 다음 Ubuntu 부팅을 설정하거나 검증하지 못했습니다.",
+        "reboot_not_started": "Windows 재부팅이 시작되지 않아 BootNext 설정을 되돌렸습니다.",
+        "rollback_failed": "재부팅이 시작되지 않았고 BootNext 설정도 되돌리지 못했습니다. Windows에서 확인하세요.",
+        "ubuntu_boot_failed": "재부팅 후 Windows가 다시 실행되어 Ubuntu 부팅에 실패했습니다.",
+        "ubuntu_not_ready": "제한 시간 안에 Ubuntu SSH를 확인하지 못했습니다.",
+        "internal_error": "Ubuntu 부팅 작업 중 내부 오류가 발생했습니다."
+      }
+    },
     "portalDialog": {
       "title": "모니터링 포털",
       "close": "닫기",
@@ -150,7 +211,8 @@
       "labels": {
         "wake": "깨우기",
         "shutdown": "종료",
-        "reboot": "재부팅"
+        "reboot": "재부팅",
+        "boot_ubuntu": "Ubuntu 부팅"
       },
       "progress": "{target}에 {action} 명령을 보내는 중…",
       "success": "{target}에 {action} 명령을 보냈습니다.",

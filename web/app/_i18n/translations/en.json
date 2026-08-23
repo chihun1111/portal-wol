@@ -87,6 +87,7 @@
         "wake": "Wake",
         "shutdown": "Shutdown",
         "reboot": "Reboot",
+        "bootUbuntu": "Boot Ubuntu",
         "edit": "Edit",
         "delete": "Delete"
       }
@@ -129,6 +130,66 @@
       "delete": "Delete",
       "cancel": "Cancel"
     },
+    "confirmPower": {
+      "shutdown": {
+        "title": "Confirm shutdown",
+        "message": "Shut down {name}?",
+        "confirm": "Shutdown"
+      },
+      "reboot": {
+        "title": "Confirm reboot",
+        "message": "Reboot {name}?",
+        "confirm": "Reboot"
+      },
+      "boot_ubuntu": {
+        "title": "Confirm Ubuntu boot",
+        "message": "Boot {name} into Ubuntu?",
+        "note": "If the PC is off, it will wake into Windows first and set a one-time Ubuntu boot. This can take up to eight minutes.",
+        "confirm": "Boot Ubuntu"
+      }
+    },
+    "boot": {
+      "title": "Ubuntu boot for {name}",
+      "elapsed": "Elapsed",
+      "elapsedValue": "{seconds}s",
+      "jobId": "Job ID",
+      "started": "Started the Ubuntu boot job for {target}.",
+      "startFailed": "Failed to start the Ubuntu boot job.",
+      "completed": "{target} booted into Ubuntu.",
+      "cancel": "Cancel job",
+      "cancelling": "Cancelling…",
+      "cancelled": "Cancelled the Ubuntu boot job.",
+      "cancelFailed": "Failed to cancel the job.",
+      "stages": {
+        "queued": "Waiting to start",
+        "detecting_os": "Detecting the current OS",
+        "waking": "Sending Wake-on-LAN",
+        "waiting_for_windows": "Waiting for Windows SSH",
+        "setting_bootnext": "Setting the next Ubuntu boot",
+        "rebooting": "Rebooting Windows",
+        "waiting_for_ubuntu": "Waiting for Ubuntu SSH",
+        "succeeded": "Ubuntu boot complete",
+        "failed": "Ubuntu boot failed",
+        "timed_out": "Ubuntu boot timed out",
+        "cancelled": "Job cancelled"
+      },
+      "errors": {
+        "ubuntu_boot_disabled": "Ubuntu boot is not enabled yet.",
+        "unsupported_boot_target": "This target does not support Ubuntu boot selection.",
+        "active_boot_job": "An Ubuntu boot job is already running.",
+        "job_not_cancellable": "BootNext setup has started, so this job can no longer be cancelled.",
+        "service_restarted": "The service restarted and safely stopped the active job.",
+        "wake_failed": "Failed to send Wake-on-LAN.",
+        "windows_not_ready": "Windows SSH did not become ready before the timeout.",
+        "job_timeout": "The overall Ubuntu boot timeout was exceeded.",
+        "bootnext_set_failed": "Windows could not set or verify the next Ubuntu boot.",
+        "reboot_not_started": "Windows did not start rebooting, so BootNext was rolled back.",
+        "rollback_failed": "Windows did not reboot and BootNext rollback failed. Check Windows manually.",
+        "ubuntu_boot_failed": "Windows returned after reboot, so Ubuntu did not start.",
+        "ubuntu_not_ready": "Ubuntu SSH did not become ready before the timeout.",
+        "internal_error": "An internal error occurred during the Ubuntu boot job."
+      }
+    },
     "portalDialog": {
       "title": "Monitoring Portal",
       "close": "Close",
@@ -150,7 +211,8 @@
       "labels": {
         "wake": "Wake",
         "shutdown": "Shutdown",
-        "reboot": "Reboot"
+        "reboot": "Reboot",
+        "boot_ubuntu": "Ubuntu boot"
       },
       "progress": "Sending {action} command to {target}…",
       "success": "Sent {action} command to {target}.",

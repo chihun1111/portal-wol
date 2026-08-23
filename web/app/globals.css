@@ -453,6 +453,10 @@ body {
   border-left: 0.35rem solid rgba(59, 130, 246, 0.55);
 }
 
+.action-log-item--boot_ubuntu {
+  border-left: 0.35rem solid rgba(168, 85, 247, 0.6);
+}
+
 .action-log-header {
   display: grid;
   grid-template-columns: auto auto 1fr;
@@ -478,6 +482,10 @@ body {
 
 .action-log-item--reboot .action-log-action {
   color: rgba(191, 219, 254, 0.95);
+}
+
+.action-log-item--boot_ubuntu .action-log-action {
+  color: rgba(216, 180, 254, 0.98);
 }
 
 .action-log-status {
@@ -557,6 +565,10 @@ body {
 
 [data-theme='light'] .action-log-item--reboot {
   border-left-color: rgba(59, 130, 246, 0.45);
+}
+
+[data-theme='light'] .action-log-item--boot_ubuntu {
+  border-left-color: rgba(147, 51, 234, 0.48);
 }
 
 [data-theme='light'] .action-log-action {
@@ -705,6 +717,100 @@ body {
 .dialog-shell h2 {
   margin: 0 0 1rem;
   font-size: 1.25rem;
+}
+
+.dialog-note {
+  color: var(--color-muted);
+  line-height: 1.55;
+}
+
+.boot-job-dialog {
+  width: min(34rem, 92vw);
+}
+
+.boot-job-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 0.0625rem solid var(--color-border);
+  border-radius: 1rem;
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.boot-job-status__dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: #60a5fa;
+  box-shadow: 0 0 0 0.3rem rgba(96, 165, 250, 0.14);
+}
+
+.boot-job-status--queued .boot-job-status__dot,
+.boot-job-status--running .boot-job-status__dot {
+  animation: boot-job-pulse 1.4s ease-in-out infinite;
+}
+
+.boot-job-status--succeeded .boot-job-status__dot {
+  background: #4ade80;
+  box-shadow: 0 0 0 0.3rem rgba(74, 222, 128, 0.14);
+}
+
+.boot-job-status--failed .boot-job-status__dot,
+.boot-job-status--timed_out .boot-job-status__dot {
+  background: #f87171;
+  box-shadow: 0 0 0 0.3rem rgba(248, 113, 113, 0.14);
+}
+
+.boot-job-status--cancelled .boot-job-status__dot {
+  background: #94a3b8;
+  box-shadow: 0 0 0 0.3rem rgba(148, 163, 184, 0.14);
+}
+
+.boot-job-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.boot-job-details div {
+  padding: 0.875rem;
+  border-radius: 0.85rem;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.boot-job-details dt {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.boot-job-details dd {
+  margin: 0.35rem 0 0;
+  font-weight: 600;
+}
+
+.boot-job-error {
+  padding: 0.875rem;
+  border-radius: 0.85rem;
+  background: rgba(248, 113, 113, 0.12);
+  color: #fecaca;
+  line-height: 1.5;
+}
+
+@keyframes boot-job-pulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
 }
 
 .modal-actions {

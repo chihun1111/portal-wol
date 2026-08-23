@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBodyClass } from '../../_hooks/useBodyClass';
 import { useTheme } from '../../_hooks/useTheme';
 import { useLanguage, type TranslateFn } from '../../_i18n/LanguageProvider';
-import { getRequestErrorMessage, request } from '../../_lib/api';
+import { getRequestErrorCode, getRequestErrorMessage, request } from '../../_lib/api';
 import { EMPTY_TARGET_FORM, toTargetPayload, type TargetFormState } from '../../_lib/targets';
 import { ConfirmDeleteModal } from './_components/ConfirmDeleteModal';
+import { BootJobModal } from './_components/BootJobModal';
+import { ConfirmPowerModal, type PendingPowerAction } from './_components/ConfirmPowerModal';
 import { LogsCard } from './_components/LogsCard';
 import { WolHeader } from './_components/WolHeader';
 import { TargetModal } from './_components/TargetModal';
@@ -16,14 +18,26 @@ import { TargetsCard } from './_components/TargetsCard';
 import { ToastContainer } from './_components/ToastContainer';
 import { useToastQueue } from './_hooks/useToastQueue';
 import { ACTION_ENDPOINTS } from './_lib/constants';
-import type { ApiLogRecord, LogEntry, LogsResponse, PowerAction, Target, TargetsResponse } from './_lib/types';
+import type {
+  ApiLogRecord,
+  BootJob,
+  BootJobResponse,
+  BootJobsResponse,
+  DirectPowerAction,
+  LogEntry,
+  LogsResponse,
+  PowerAction,
+  Target,
+  TargetsResponse
+} from './_lib/types';
 
 type RequestOptions = { silent?: boolean };
 
 type StatusOptions = { log?: boolean };
 
 const ACTION_LOG_LIMIT = 120;
-const POWER_ACTIONS: readonly PowerAction[] = ['wake', 'shutdown', 'reboot'];
+const POWER_ACTIONS: readonly PowerAction[] = ['wake', 'shutdown', 'reboot', 'boot_ubuntu'];
+const TERMINAL_BOOT_STAGES = new Set(['succeeded', 'failed', 'timed_out', 'cancelled']);
 
 function isPowerAction(value: unknown): value is PowerAction {
   return typeof value === 'string' && POWER_ACTIONS.includes(value as PowerAction);
@@ -61,19 +75,33 @@ function mapApiLogsToEntries(records: ApiLogRecord[] | undefined, t: TranslateFn
 
   const mapped: LogEntry[] = [];
   records.forEach((record, index) => {
-    if (!isPowerAction(record.evt)) {
+    const rawAction = record.evt === 'boot-ubuntu' ? 'boot_ubuntu' : record.evt;
+    if (!isPowerAction(rawAction)) {
       return;
     }
-    const action = record.evt;
+    const action = rawAction;
+    if (action === 'boot_ubuntu' && (!record.stage || !TERMINAL_BOOT_STAGES.has(record.stage))) {
+      return;
+    }
     const target = typeof record.target === 'string' && record.target.trim() ? record.target.trim() : '-';
     const actionLabel = t(`wol.actions.labels.${action}`);
-    const failed = (typeof record.rc === 'number' && record.rc !== 0) || Boolean(record.error);
+    const failed =
+      (typeof record.rc === 'number' && record.rc !== 0) ||
+      Boolean(record.error) ||
+      (action === 'boot_ubuntu' && record.stage !== 'succeeded');
     const status: LogEntry['status'] = failed ? 'error' : 'success';
-    const baseMessage =
-      status === 'success'
+    const baseMessage = action === 'boot_ubuntu'
+      ? status === 'success'
+        ? t('wol.boot.completed', { target })
+        : record.stage === 'cancelled'
+          ? t('wol.boot.cancelled')
+          : t(`wol.boot.errors.${record.error_code ?? 'internal_error'}`)
+      : status === 'success'
         ? t('wol.actions.success', { action: actionLabel, target })
         : t('wol.actions.failure', { action: actionLabel });
-    const detail = toDetailText(record.stderr) ?? toDetailText(record.message) ?? toDetailText(record.error);
+    const detail = action === 'boot_ubuntu'
+      ? null
+      : toDetailText(record.stderr) ?? toDetailText(record.message) ?? toDetailText(record.error);
     const message = status === 'error' && detail ? `${baseMessage} (${detail})` : baseMessage;
     mapped.push({
       id: `api-${record.ts ?? 'na'}-${action}-${target}-${index}`,
@@ -104,9 +132,13 @@ export default function WolPage() {
   const [targetError, setTargetError] = useState('');
   const [editingTarget, setEditingTarget] = useState<Target | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<Target | null>(null);
+  const [pendingPowerAction, setPendingPowerAction] = useState<PendingPowerAction | null>(null);
+  const [bootJob, setBootJob] = useState<BootJob | null>(null);
+  const [bootCancelling, setBootCancelling] = useState(false);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
   const loadingTargetsRef = useRef(false);
   const statusRefreshingRef = useRef(false);
+  const handledBootJobsRef = useRef<Set<string>>(new Set());
 
   const appendLog = useCallback((entry: LogEntry) => {
     setLogs((prev) => [entry, ...prev].slice(0, ACTION_LOG_LIMIT));
@@ -188,6 +220,57 @@ export default function WolPage() {
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
+
+  const applyBootJobUpdate = useCallback(
+    (job: BootJob) => {
+      setBootJob(job);
+      if (!job.terminal || handledBootJobsRef.current.has(job.id)) {
+        return;
+      }
+      handledBootJobsRef.current.add(job.id);
+      if (job.state === 'succeeded') {
+        showToast(t('wol.boot.completed', { target: job.target }), 'success');
+      } else if (job.state === 'cancelled') {
+        showToast(t('wol.boot.cancelled'), 'info');
+      } else {
+        showToast(t(`wol.boot.errors.${job.error_code ?? 'internal_error'}`), 'error');
+      }
+      loadLogs();
+    },
+    [loadLogs, showToast, t]
+  );
+
+  const restoreActiveBootJob = useCallback(async () => {
+    try {
+      const data = await request<BootJobsResponse>('api/jobs?target=mainpc&limit=20');
+      const active = data.jobs?.find((job) => !job.terminal);
+      if (active) {
+        setBootJob(active);
+      }
+    } catch (error) {
+      console.warn('boot job restore error', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    restoreActiveBootJob();
+  }, [restoreActiveBootJob]);
+
+  useEffect(() => {
+    if (!bootJob || bootJob.terminal) {
+      return;
+    }
+    const poll = async () => {
+      try {
+        const data = await request<BootJobResponse>(`api/jobs/${encodeURIComponent(bootJob.id)}`);
+        applyBootJobUpdate(data.job);
+      } catch (error) {
+        console.warn('boot job poll error', error);
+      }
+    };
+    const interval = window.setInterval(poll, 2000);
+    return () => window.clearInterval(interval);
+  }, [applyBootJobUpdate, bootJob]);
 
   useEffect(() => {
     if (!targets.length) {
@@ -295,7 +378,7 @@ export default function WolPage() {
   }, [confirmTarget, loadTargets, showToast, t]);
 
   const handleAction = useCallback(
-    async (target: Target, action: PowerAction) => {
+    async (target: Target, action: DirectPowerAction) => {
       if (action === 'wake' && !target.has_mac) {
         showToast(t('wol.toasts.macRequired'), 'warning');
         return;
@@ -344,6 +427,67 @@ export default function WolPage() {
     [appendLog, loadTargets, showToast, t, updateLog]
   );
 
+  const requestDirectAction = useCallback(
+    (target: Target, action: DirectPowerAction) => {
+      if (action === 'wake') {
+        handleAction(target, action);
+        return;
+      }
+      setPendingPowerAction({ target, action });
+    },
+    [handleAction]
+  );
+
+  const startBootUbuntu = useCallback(
+    async (target: Target) => {
+      const key = `boot_ubuntu:${target.name}`;
+      setActionLoadingKey(key);
+      try {
+        const data = await request<BootJobResponse>('api/boot/ubuntu', {
+          method: 'POST',
+          body: { target: target.name }
+        });
+        setBootJob(data.job);
+        showToast(t('wol.boot.started', { target: target.name }), 'info');
+      } catch (error) {
+        console.error(error);
+        await restoreActiveBootJob();
+        const errorCode = getRequestErrorCode(error);
+        showToast(errorCode ? t(`wol.boot.errors.${errorCode}`) : t('wol.boot.startFailed'), 'error');
+      } finally {
+        setActionLoadingKey(null);
+      }
+    },
+    [restoreActiveBootJob, showToast, t]
+  );
+
+  const confirmPowerAction = useCallback(async () => {
+    const pending = pendingPowerAction;
+    setPendingPowerAction(null);
+    if (!pending) return;
+    if (pending.action === 'boot_ubuntu') {
+      await startBootUbuntu(pending.target);
+      return;
+    }
+    await handleAction(pending.target, pending.action);
+  }, [handleAction, pendingPowerAction, startBootUbuntu]);
+
+  const cancelBootJob = useCallback(async () => {
+    if (!bootJob || !bootJob.can_cancel || bootJob.terminal) return;
+    setBootCancelling(true);
+    try {
+      const data = await request<BootJobResponse>(`api/jobs/${encodeURIComponent(bootJob.id)}/cancel`, {
+        method: 'POST'
+      });
+      applyBootJobUpdate(data.job);
+    } catch (error) {
+      const errorCode = getRequestErrorCode(error);
+      showToast(errorCode ? t(`wol.boot.errors.${errorCode}`) : t('wol.boot.cancelFailed'), 'error');
+    } finally {
+      setBootCancelling(false);
+    }
+  }, [applyBootJobUpdate, bootJob, showToast, t]);
+
   return (
     <div className="page-shell">
       <WolHeader
@@ -358,7 +502,8 @@ export default function WolPage() {
           targets={targets}
           filteredTargets={filteredTargets}
           actionLoadingKey={actionLoadingKey}
-          onAction={handleAction}
+          onAction={requestDirectAction}
+          onBootUbuntu={(target) => setPendingPowerAction({ target, action: 'boot_ubuntu' })}
           onEdit={openEditModal}
           onDelete={openConfirmModal}
         />
@@ -378,6 +523,17 @@ export default function WolPage() {
       />
 
       <ConfirmDeleteModal target={confirmTarget} onConfirm={handleDelete} onCancel={() => setConfirmTarget(null)} />
+      <ConfirmPowerModal
+        pending={pendingPowerAction}
+        onConfirm={confirmPowerAction}
+        onCancel={() => setPendingPowerAction(null)}
+      />
+      <BootJobModal
+        job={bootJob}
+        cancelling={bootCancelling}
+        onCancel={cancelBootJob}
+        onClose={() => setBootJob(null)}
+      />
     </div>
   );
 }

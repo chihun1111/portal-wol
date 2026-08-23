@@ -7,15 +7,32 @@
       target: prod
       args:
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-}
+        APP_UID: ${WOL_UID:-1000}
+        APP_GID: ${WOL_GID:-1000}
     # Linux 서버에서 브로드캐스트 송출을 위해 host 네트워크 권장
     network_mode: host
     # systemd 서비스와 동시에 실행하면 포트 충돌이 발생하므로 반드시 한 가지 방식만 사용하세요.
     environment:
-      - HOST=0.0.0.0        # 컨테이너가 직접 수신하도록 바인딩
+      - HOST=127.0.0.1      # Tailscale Serve만 접근하도록 localhost에 한정
       - PORT=8000
+      - BOOT_DB_PATH=/app/data/boot-jobs.sqlite3
+      - WOL_SSH_CONFIG=/run/wol-ssh/config
       - NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-}
-    command: ["/bin/sh", "-c", "uvicorn app.main:create_app --factory --host ${HOST:-0.0.0.0} --port ${PORT:-8000}"]
+    command: ["uvicorn", "app.main:create_app", "--factory", "--host", "127.0.0.1", "--port", "8000"]
     volumes:
       - ../.env:/app/.env:ro
+      - ../app/targets.json:/app/app/targets.json
       - ../logs:/app/logs
+      - ../data:/app/data
+      - ${WOL_SSH_DIR:-../secrets/ssh}:/run/wol-ssh:ro
+      - ${WOL_LEGACY_SECRETS_DIR:-../secrets}:/srv/wol-core/secrets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped

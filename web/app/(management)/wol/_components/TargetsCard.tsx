@@ -1,6 +1,6 @@
 'use client';
 
-import type { PowerAction, Target } from '../_lib/types';
+import type { DirectPowerAction, Target } from '../_lib/types';
 import { formatRelative } from '../_lib/format';
 import { useLanguage } from '../../../_i18n/LanguageProvider';
 
@@ -8,7 +8,8 @@ type TargetsCardProps = {
   targets: Target[];
   filteredTargets: Target[];
   actionLoadingKey: string | null;
-  onAction: (target: Target, action: PowerAction) => void;
+  onAction: (target: Target, action: DirectPowerAction) => void;
+  onBootUbuntu: (target: Target) => void;
   onEdit: (target: Target) => void;
   onDelete: (target: Target) => void;
 };
@@ -18,6 +19,7 @@ export function TargetsCard({
   filteredTargets,
   actionLoadingKey,
   onAction,
+  onBootUbuntu,
   onEdit,
   onDelete
 }: TargetsCardProps) {
@@ -46,6 +48,7 @@ export function TargetsCard({
     wake: t('wol.targets.actions.wake'),
     shutdown: t('wol.targets.actions.shutdown'),
     reboot: t('wol.targets.actions.reboot'),
+    bootUbuntu: t('wol.targets.actions.bootUbuntu'),
     edit: t('wol.targets.actions.edit'),
     delete: t('wol.targets.actions.delete')
   };
@@ -87,6 +90,7 @@ export function TargetsCard({
               const wakeKey = `wake:${target.name}`;
               const shutdownKey = `shutdown:${target.name}`;
               const rebootKey = `reboot:${target.name}`;
+              const bootUbuntuKey = `boot_ubuntu:${target.name}`;
 
               return (
                 <tr key={target.name}>
@@ -133,6 +137,17 @@ export function TargetsCard({
                       >
                         {actionLabels.reboot}
                       </button>
+                      {target.can_boot_ubuntu ? (
+                        <button
+                          className="btn small primary"
+                          data-action="boot_ubuntu"
+                          data-name={target.name}
+                          data-loading={actionLoadingKey === bootUbuntuKey ? 'true' : undefined}
+                          onClick={() => onBootUbuntu(target)}
+                        >
+                          {actionLabels.bootUbuntu}
+                        </button>
+                      ) : null}
                     </div>
                     <div className="button-group secondary">
                       <button className="btn small ghost" onClick={() => onEdit(target)}>

@@ -15,6 +15,7 @@ secrets/
 # Logs
 logs/
 *.log
+data/
 # Docker
 *.pid
 # Node/Next.js

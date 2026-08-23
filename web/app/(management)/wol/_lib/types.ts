@@ -1,4 +1,6 @@
-export type PowerAction = 'wake' | 'shutdown' | 'reboot';
+export type PowerAction = 'wake' | 'shutdown' | 'reboot' | 'boot_ubuntu';
+export type DirectPowerAction = Exclude<PowerAction, 'boot_ubuntu'>;
+export type ConfirmablePowerAction = Extract<PowerAction, 'shutdown' | 'reboot' | 'boot_ubuntu'>;
 
 export type Target = {
   name: string;
@@ -10,6 +12,7 @@ export type Target = {
   last_status_at?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
+  can_boot_ubuntu?: boolean;
 };
 
 export type TargetsResponse = {
@@ -24,6 +27,8 @@ export type ApiLogRecord = {
   error?: string;
   stderr?: string;
   message?: string;
+  stage?: string;
+  error_code?: string;
 };
 
 export type LogsResponse = {
@@ -49,3 +54,33 @@ export type ToastState = {
   variant: ToastVariant;
   active: boolean;
 };
+
+export type BootJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled';
+
+export type BootJobStage =
+  | 'queued'
+  | 'detecting_os'
+  | 'waking'
+  | 'waiting_for_windows'
+  | 'setting_bootnext'
+  | 'rebooting'
+  | 'waiting_for_ubuntu'
+  | 'succeeded'
+  | 'failed'
+  | 'timed_out'
+  | 'cancelled';
+
+export type BootJob = {
+  id: string;
+  target: string;
+  state: BootJobState;
+  stage: BootJobStage;
+  terminal: boolean;
+  can_cancel: boolean;
+  created_at: string;
+  updated_at: string;
+  error_code?: string | null;
+};
+
+export type BootJobResponse = { job: BootJob };
+export type BootJobsResponse = { jobs?: BootJob[] };

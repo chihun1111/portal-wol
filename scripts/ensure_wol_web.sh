@@ -4,7 +4,7 @@ set -euo pipefail
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 APP_DIR="/srv/wol-core"
-HOST="0.0.0.0"
+HOST="127.0.0.1"
 PORT="${WOL_WEB_PORT:-8000}"
 LOG_DIR="$APP_DIR/logs"
 WATCHDOG_LOG="$LOG_DIR/wol-web-watchdog.log"

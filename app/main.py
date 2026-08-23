@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes import router
+from .core.auth import tailscale_identity_middleware
 from .core.settings import get_settings
+from .services.boot_jobs import BootJobManager
 
 # Load .env if present before evaluating settings
 load_dotenv()
@@ -21,7 +25,19 @@ def _mount_static_assets(app: FastAPI) -> None:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="WOL-Web", version="1.0.0")
+    boot_jobs = BootJobManager()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        boot_jobs.startup()
+        try:
+            yield
+        finally:
+            boot_jobs.shutdown()
+
+    app = FastAPI(title="WOL-Web", version="1.1.0", lifespan=lifespan)
+    app.state.boot_jobs = boot_jobs
+    app.middleware("http")(tailscale_identity_middleware)
     app.include_router(router)
     _mount_static_assets(app)
     return app

@@ -1,6 +1,6 @@
-import type { PowerAction } from './types';
+import type { DirectPowerAction } from './types';
 
-export const ACTION_ENDPOINTS: Record<PowerAction, string> = {
+export const ACTION_ENDPOINTS: Record<DirectPowerAction, string> = {
   wake: 'api/wake',
   shutdown: 'api/shutdown',
   reboot: 'api/reboot'

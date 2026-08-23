@@ -110,7 +110,7 @@ def send_magic_packet(mac: str, broadcast: str) -> None:
         sock.close()
 
 
-def wake_target(name: str) -> Dict[str, Any]:
+def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
     settings = get_settings()
     target = get_target_or_404(name)
     mac = target.get("mac")
@@ -130,13 +130,14 @@ def wake_target(name: str) -> Dict[str, Any]:
     else:
         send_magic_packet(mac, settings.broadcast)
         method = "magic-packet"
-    log_event({
-        "evt": "wake",
-        "target": name,
-        "mac": mac,
-        "from": "api",
-        "method": method,
-    })
+    if audit:
+        log_event({
+            "evt": "wake",
+            "target": name,
+            "mac": mac,
+            "from": "api",
+            "method": method,
+        })
     record_wake(name)
     return {"ok": True, "sent": method, "target": name}
 

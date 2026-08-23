@@ -29,6 +29,22 @@ export function getRequestErrorMessage(error: unknown, fallback: string): string
   return message ?? fallback;
 }
 
+export function getRequestErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  const payload = (error as RequestError).payload;
+  if (!payload || typeof payload !== 'object') {
+    return undefined;
+  }
+  const detail = (payload as Record<string, unknown>).detail;
+  if (!detail || typeof detail !== 'object') {
+    return undefined;
+  }
+  const code = (detail as Record<string, unknown>).error;
+  return typeof code === 'string' && code.trim() ? code.trim() : undefined;
+}
+
 export async function request<T = unknown>(path: string, init: RequestOptions = {}): Promise<T> {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const url = `${API_BASE}${normalizedPath}`;
