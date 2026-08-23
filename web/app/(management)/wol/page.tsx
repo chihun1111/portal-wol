@@ -134,6 +134,7 @@ export default function WolPage() {
   const [confirmTarget, setConfirmTarget] = useState<Target | null>(null);
   const [pendingPowerAction, setPendingPowerAction] = useState<PendingPowerAction | null>(null);
   const [bootJob, setBootJob] = useState<BootJob | null>(null);
+  const [bootJobStartedAt, setBootJobStartedAt] = useState<number | null>(null);
   const [bootCancelling, setBootCancelling] = useState(false);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
   const loadingTargetsRef = useRef(false);
@@ -245,6 +246,8 @@ export default function WolPage() {
       const data = await request<BootJobsResponse>('api/jobs?target=mainpc&limit=20');
       const active = data.jobs?.find((job) => !job.terminal);
       if (active) {
+        const createdAt = new Date(active.created_at).getTime();
+        setBootJobStartedAt(Number.isNaN(createdAt) ? Date.now() : createdAt);
         setBootJob(active);
       }
     } catch (error) {
@@ -441,6 +444,7 @@ export default function WolPage() {
   const startBootUbuntu = useCallback(
     async (target: Target) => {
       const key = `boot_ubuntu:${target.name}`;
+      setBootJobStartedAt(Date.now());
       setActionLoadingKey(key);
       try {
         const data = await request<BootJobResponse>('api/boot/ubuntu', {
@@ -451,6 +455,7 @@ export default function WolPage() {
         showToast(t('wol.boot.started', { target: target.name }), 'info');
       } catch (error) {
         console.error(error);
+        setBootJobStartedAt(null);
         await restoreActiveBootJob();
         const errorCode = getRequestErrorCode(error);
         showToast(errorCode ? t(`wol.boot.errors.${errorCode}`) : t('wol.boot.startFailed'), 'error');
@@ -530,9 +535,13 @@ export default function WolPage() {
       />
       <BootJobModal
         job={bootJob}
+        startedAt={bootJobStartedAt}
         cancelling={bootCancelling}
         onCancel={cancelBootJob}
-        onClose={() => setBootJob(null)}
+        onClose={() => {
+          setBootJob(null);
+          setBootJobStartedAt(null);
+        }}
       />
     </div>
   );

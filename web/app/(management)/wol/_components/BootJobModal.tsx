@@ -7,26 +7,30 @@ import type { BootJob } from '../_lib/types';
 
 type BootJobModalProps = {
   job: BootJob | null;
+  startedAt: number | null;
   cancelling: boolean;
   onCancel: () => void;
   onClose: () => void;
 };
 
-function elapsedSeconds(createdAt: string, now: number): number {
-  const created = new Date(createdAt).getTime();
+function elapsedSeconds(createdAt: string, startedAt: number | null, now: number): number {
+  const created = startedAt ?? new Date(createdAt).getTime();
   if (Number.isNaN(created)) return 0;
   return Math.max(0, Math.floor((now - created) / 1000));
 }
 
-export function BootJobModal({ job, cancelling, onCancel, onClose }: BootJobModalProps) {
+export function BootJobModal({ job, startedAt, cancelling, onCancel, onClose }: BootJobModalProps) {
   const { t } = useLanguage();
   const [now, setNow] = useState(() => Date.now());
+  const jobId = job?.id;
+  const jobTerminal = job?.terminal;
 
   useEffect(() => {
-    if (!job || job.terminal) return;
+    setNow(Date.now());
+    if (!jobId || jobTerminal) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [job]);
+  }, [jobId, jobTerminal]);
 
   if (!job) {
     return null;
@@ -45,7 +49,7 @@ export function BootJobModal({ job, cancelling, onCancel, onClose }: BootJobModa
         <dl className="boot-job-details">
           <div>
             <dt>{t('wol.boot.elapsed')}</dt>
-            <dd>{t('wol.boot.elapsedValue', { seconds: elapsedSeconds(job.created_at, now) })}</dd>
+            <dd>{t('wol.boot.elapsedValue', { seconds: elapsedSeconds(job.created_at, startedAt, now) })}</dd>
           </div>
           <div>
             <dt>{t('wol.boot.jobId')}</dt>
