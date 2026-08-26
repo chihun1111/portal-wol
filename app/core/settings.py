@@ -66,7 +66,9 @@ def get_settings() -> Settings:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return Settings(
         lan_iface=env("LAN_IFACE", "eno1"),
-        broadcast=env("BROADCAST", "192.168.219.255"),
+        # A limited broadcast is a safe default across LAN renumbering. Operators
+        # should still prefer the subnet-directed broadcast in .env.
+        broadcast=env("BROADCAST", "255.255.255.255"),
         wol_method=env("WOL_METHOD", "python").lower(),
         log_path=log_path,
         log_retention_days=_env_int("LOG_RETENTION_DAYS", 7),

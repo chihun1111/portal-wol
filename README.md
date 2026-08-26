@@ -79,7 +79,7 @@ Compose의 `WOL_SSH_DIR`은 새 OS 판별/BootNext SSH 구성을, `WOL_LEGACY_SE
 | 키 | 설명 |
 | --- | --- |
 | `LAN_IFACE` | 매직 패킷을 보낼 NIC 이름. Linux: `ip -br addr` 로 확인 |
-| `BROADCAST` | 대상 PC 서브넷 브로드캐스트 IP |
+| `BROADCAST` | 대상 PC 서브넷 브로드캐스트 IP. 서버 LAN이 바뀌면 반드시 함께 갱신 (`ip route`로 확인) |
 | `WOL_METHOD` | `python`(기본) 또는 `etherwake` |
 | `STATUS_TCP_PORTS` | ping 응답이 차단된 장비를 위해 상태 확인 시 추가로 검사할 TCP 포트 목록 (쉼표 구분, 기본 `3389,445,22`) |
 | `HOST`, `PORT` | FastAPI 바인딩 주소/포트 |
@@ -95,7 +95,9 @@ Compose의 `WOL_SSH_DIR`은 새 OS 판별/BootNext SSH 구성을, `WOL_LEGACY_SE
 | `BOOT_POLL_INTERVAL`, `SSH_COMMAND_TIMEOUT` | OS 확인 주기와 SSH 명령 제한 시간(초) |
 | `REBOOT_START_TIMEOUT` | Windows가 계속 응답할 때 재부팅 미시작으로 판정하기 전 대기 시간(초) |
 
-`.env.example` 는 Docker/운영 기본값을 참고용으로 제공합니다.
+`.env.example` 는 Docker/운영 기본값을 참고용으로 제공합니다. 현재 운영 LAN
+`192.168.123.0/24`에서는 `BROADCAST=192.168.123.255`를 사용합니다. 값이 빠진 경우
+애플리케이션은 특정 사설망에 종속되지 않는 `255.255.255.255`를 사용합니다.
 
 ## 타겟 저장소 구조 (`app/targets.json`)
 타겟의 IP/MAC/명령은 **`app/targets.json` 한 파일만** 사용합니다.  

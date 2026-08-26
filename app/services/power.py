@@ -127,9 +127,11 @@ def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
         if rc != 0:
             raise HTTPException(500, "etherwake failed")
         method = "etherwake"
+        destination = settings.lan_iface
     else:
         send_magic_packet(mac, settings.broadcast)
         method = "magic-packet"
+        destination = settings.broadcast
     if audit:
         log_event({
             "evt": "wake",
@@ -137,9 +139,15 @@ def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
             "mac": mac,
             "from": "api",
             "method": method,
+            "destination": destination,
         })
     record_wake(name)
-    return {"ok": True, "sent": method, "target": name}
+    return {
+        "ok": True,
+        "sent": method,
+        "target": name,
+        "destination": destination,
+    }
 
 
 def execute_target_command(name: str, action: str) -> Dict[str, Any]:
