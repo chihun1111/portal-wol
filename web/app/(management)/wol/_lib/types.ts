@@ -62,6 +62,7 @@ export type BootJobStage =
   | 'detecting_os'
   | 'waking'
   | 'waiting_for_windows'
+  | 'windows_login_ready'
   | 'setting_bootnext'
   | 'rebooting'
   | 'waiting_for_ubuntu'

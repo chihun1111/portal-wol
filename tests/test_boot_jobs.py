@@ -95,9 +95,48 @@ def test_offline_flow_sends_wol_then_times_out_waiting_for_windows(tmp_path, mon
     job = manager.create_job("mainpc", "user@example.com")
     finished = wait_for_terminal(manager, job["id"])
 
-    assert wake_calls == [("mainpc", False)]
+    assert wake_calls == [("mainpc", True)]
     assert finished["state"] == "timed_out"
     assert finished["error_code"] == "windows_not_ready"
+
+
+def test_offline_flow_waits_for_windows_login_before_setting_bootnext(tmp_path, monkeypatch):
+    manager = make_manager(tmp_path)
+    state = {"awake": False, "ubuntu": False}
+    flow = []
+    stages = []
+    manager._audit = lambda _job, _target, _actor, stage, *_args: stages.append(stage)
+
+    monkeypatch.setattr(manager, "_probe_ubuntu", lambda: state["ubuntu"])
+
+    def probe_windows():
+        if state["awake"]:
+            flow.append("windows_login_ready")
+            return True
+        return False
+
+    def wake_target(target, audit):
+        flow.append("wake")
+        assert target == "mainpc"
+        assert audit is True
+        state["awake"] = True
+
+    def windows_command(command):
+        flow.append(command)
+        if command == "reboot":
+            state["ubuntu"] = True
+        return True
+
+    monkeypatch.setattr(manager, "_probe_windows", probe_windows)
+    monkeypatch.setattr(manager, "_windows_command", windows_command)
+    monkeypatch.setattr(boot_jobs, "wake_target", wake_target)
+
+    job = manager.create_job("mainpc", "user@example.com")
+    finished = wait_for_terminal(manager, job["id"])
+
+    assert finished["state"] == "succeeded"
+    assert flow == ["wake", "windows_login_ready", "set-ubuntu-once", "reboot"]
+    assert stages.index("windows_login_ready") < stages.index("setting_bootnext")
 
 
 def test_duplicate_job_is_rejected_and_early_job_can_be_cancelled(tmp_path, monkeypatch):

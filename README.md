@@ -37,7 +37,7 @@ $env:NEXT_PUBLIC_API_BASE = ""
 
 ## 주요 기능
 - Wake / Shutdown / Reboot 명령 API 및 JSONL 로그 기록
-- WOL → Windows SSH → 일회성 Ubuntu BootNext → Ubuntu SSH 확인 작업
+- 대상이 꺼져 있으면 WOL 전송 → Windows 제한 계정 SSH 로그인 확인 → 일회성 Ubuntu BootNext → Ubuntu SSH 확인 작업
 - 타겟(PC) 목록 CRUD, 상태 폴링, Wake 실행을 제공하는 웹 UI
 - MAC 미설정 장비에 대한 자동 학습(ARP 기반, 온라인 상태에서) 및 시각적 안내
 - Tailscale Serve identity 기반 API 보호

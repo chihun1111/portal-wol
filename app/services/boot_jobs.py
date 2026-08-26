@@ -17,7 +17,13 @@ from .power import wake_target
 from .targets import get_target_or_404
 
 ACTIVE_STATES = ("queued", "running")
-CANCELLABLE_STAGES = ("queued", "detecting_os", "waking", "waiting_for_windows")
+CANCELLABLE_STAGES = (
+    "queued",
+    "detecting_os",
+    "waking",
+    "waiting_for_windows",
+    "windows_login_ready",
+)
 TERMINAL_STATES = ("succeeded", "failed", "timed_out", "cancelled")
 
 WINDOWS_COMMAND_TOKENS = {
@@ -313,7 +319,9 @@ class BootJobManager:
                 if self._is_cancelled(job_id, cancel_event):
                     return
                 try:
-                    wake_target(target, audit=False)
+                    # Keep the actual WOL destination in the audit log. This makes
+                    # an offline Ubuntu boot job independently diagnosable.
+                    wake_target(target, audit=True)
                 except Exception:
                     self._fail(job_id, "wake_failed")
                     return
@@ -340,6 +348,16 @@ class BootJobManager:
                 if not windows_ready:
                     self._timeout(job_id, "windows_not_ready")
                     return
+
+            # _probe_windows performs a real key-only SSH login and requires the
+            # restricted Windows wrapper's exact readiness token. Do not set
+            # BootNext until that authenticated login has completed.
+            self._transition(
+                job_id,
+                state="running",
+                stage="windows_login_ready",
+                can_cancel=True,
+            )
 
             if time.monotonic() >= deadline:
                 self._timeout(job_id, "job_timeout")
