@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import subprocess
+import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException
@@ -99,13 +100,21 @@ def normalize_command_spec(spec: CommandType) -> Tuple[Union[List[str], str], bo
     return cmd, shell, timeout, description
 
 
-def send_magic_packet(mac: str, broadcast: str) -> None:
+def send_magic_packet(
+    mac: str,
+    broadcast: str,
+    packet_count: int = 1,
+    packet_interval: float = 0.0,
+) -> None:
     mac_bytes = bytes.fromhex(mac.replace(":", "").replace("-", ""))
     packet = b"\xff" * 6 + mac_bytes * 16
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.sendto(packet, (broadcast, 9))
+        for index in range(max(packet_count, 1)):
+            sock.sendto(packet, (broadcast, 9))
+            if index + 1 < packet_count and packet_interval > 0:
+                time.sleep(packet_interval)
     finally:
         sock.close()
 
@@ -122,6 +131,7 @@ def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
             target = updated
     if not mac:
         raise HTTPException(400, detail={"error": "no mac for target", "target": name})
+    packet_count = 1
     if settings.wol_method == "etherwake":
         rc = subprocess.call(["/usr/sbin/etherwake", "-i", settings.lan_iface, mac])
         if rc != 0:
@@ -129,7 +139,13 @@ def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
         method = "etherwake"
         destination = settings.lan_iface
     else:
-        send_magic_packet(mac, settings.broadcast)
+        packet_count = settings.wol_packet_count
+        send_magic_packet(
+            mac,
+            settings.broadcast,
+            packet_count=packet_count,
+            packet_interval=settings.wol_packet_interval,
+        )
         method = "magic-packet"
         destination = settings.broadcast
     if audit:
@@ -140,6 +156,7 @@ def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
             "from": "api",
             "method": method,
             "destination": destination,
+            "packet_count": packet_count,
         })
     record_wake(name)
     return {
@@ -147,6 +164,7 @@ def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
         "sent": method,
         "target": name,
         "destination": destination,
+        "packet_count": packet_count,
     }
 
 

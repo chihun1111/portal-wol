@@ -81,6 +81,8 @@ Compose의 `WOL_SSH_DIR`은 새 OS 판별/BootNext SSH 구성을, `WOL_LEGACY_SE
 | `LAN_IFACE` | 매직 패킷을 보낼 NIC 이름. Linux: `ip -br addr` 로 확인 |
 | `BROADCAST` | 대상 PC 서브넷 브로드캐스트 IP. 서버 LAN이 바뀌면 반드시 함께 갱신 (`ip route`로 확인) |
 | `WOL_METHOD` | `python`(기본) 또는 `etherwake` |
+| `WOL_PACKET_COUNT` | 한 번의 깨우기 요청으로 보낼 매직 패킷 수 (기본 `5`) |
+| `WOL_PACKET_INTERVAL` | 매직 패킷 사이의 간격(초, 기본 `0.25`) |
 | `STATUS_TCP_PORTS` | ping 응답이 차단된 장비를 위해 상태 확인 시 추가로 검사할 TCP 포트 목록 (쉼표 구분, 기본 `3389,445,22`) |
 | `HOST`, `PORT` | FastAPI 바인딩 주소/포트 |
 | `LOG_PATH` | JSONL 로그 파일 경로 |

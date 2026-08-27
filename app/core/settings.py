@@ -39,6 +39,8 @@ class Settings:
     lan_iface: str
     broadcast: str
     wol_method: str
+    wol_packet_count: int
+    wol_packet_interval: float
     log_path: Path
     log_retention_days: int
     log_max_limit: int
@@ -70,6 +72,8 @@ def get_settings() -> Settings:
         # should still prefer the subnet-directed broadcast in .env.
         broadcast=env("BROADCAST", "255.255.255.255"),
         wol_method=env("WOL_METHOD", "python").lower(),
+        wol_packet_count=max(_env_int("WOL_PACKET_COUNT", 5), 1),
+        wol_packet_interval=max(_env_float("WOL_PACKET_INTERVAL", 0.25), 0.0),
         log_path=log_path,
         log_retention_days=_env_int("LOG_RETENTION_DAYS", 7),
         log_max_limit=_env_int("LOG_MAX_LIMIT", 500),
