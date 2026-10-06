@@ -109,7 +109,7 @@ OS 확인 실패 시 HTTP 503을 반환하며 다른 OS 명령을 추측해서 �
 
 Ubuntu 제한 SSH 구성은 `scripts/power/ubuntu-ssh-wrapper.sh`를 `/usr/local/libexec/portal-wol-ssh`, `ubuntu-power.sh`를 `/usr/local/sbin/portal-wol-power`에 root 소유로 설치합니다. `ubuntu-sudoers.example`은 두 전원 명령만 허용하며 `visudo -cf`로 검증한 뒤 적용합니다. 기존 WOL 키의 `from` 및 `restrict` 옵션을 유지하고 강제 명령만 새 래퍼 경로로 변경합니다. 일반 셸·추가 SSH 키·개인키는 필요하지 않습니다.
 
-Windows의 기존 제한 명령 래퍼는 기존 probe/BootNext/reboot 동작을 유지하면서 `scripts/power/windows-power-actions.ps1`을 같은 폴더에 설치하고 기존 래퍼의 함수 정의 뒤, 최상위 `try` 앞에서 dot-source합니다. 이 확장은 `shutdown`과 `reboot-windows`만 처리하며 기존 BootNext용 `reboot`는 그대로 둡니다. OS별 호스트 키는 기존 `/run/wol-ssh/config`의 alias별 고정 키를 계속 검증합니다.
+Windows의 기존 제한 명령 래퍼는 기존 probe/BootNext/reboot 동작을 유지하면서 `scripts/power/windows-power-actions.ps1`을 같은 폴더에 설치하고 기존 래퍼의 함수 정의 뒤, 최상위 `try` 앞에서 다음처럼 호출합니다: `if (@('shutdown', 'reboot-windows') -ccontains $env:SSH_ORIGINAL_COMMAND) { & "$PSScriptRoot\power-actions.ps1"; exit $LASTEXITCODE }`. 호출자의 종료 코드를 반드시 전달해야 기존 래퍼의 미지원 명령 처리로 넘어가지 않습니다. 이 확장은 `shutdown`과 `reboot-windows`만 처리하며 기존 BootNext용 `reboot`는 그대로 둡니다. OS별 호스트 키는 기존 `/run/wol-ssh/config`의 alias별 고정 키를 계속 검증합니다.
 
 ## 타겟 저장소 구조 (`app/targets.json`)
 타겟의 IP/MAC/명령은 **`app/targets.json` 한 파일만** 사용합니다.  

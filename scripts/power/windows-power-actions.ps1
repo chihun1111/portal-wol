@@ -1,5 +1,5 @@
-# Dot-source after Invoke-Bcd/Get-FirmwareManager definitions in bootnext-wrapper.ps1.
-# All unrecognized commands continue to the existing restricted wrapper.
+# Invoke after existing function definitions using & and exit $LASTEXITCODE.
+# The caller dispatches only shutdown/reboot-windows to this handler.
 if (@('shutdown', 'reboot-windows') -ccontains $env:SSH_ORIGINAL_COMMAND) {
     try {
         $shutdownExe = Join-Path $env:SystemRoot 'System32\shutdown.exe'
