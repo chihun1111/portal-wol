@@ -1,9 +1,17 @@
 import subprocess
+from dataclasses import replace
 
 import pytest
 from fastapi import HTTPException
 
 from app.services import power
+from app.core.settings import get_settings
+
+
+@pytest.fixture(autouse=True)
+def legacy_power_settings(monkeypatch):
+    settings = replace(get_settings(), ubuntu_boot_enabled=False)
+    monkeypatch.setattr(power, "get_settings", lambda: settings)
 
 
 def test_execute_target_command_renders_ip_placeholder(monkeypatch):

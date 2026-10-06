@@ -101,6 +101,16 @@ Compose의 `WOL_SSH_DIR`은 새 OS 판별/BootNext SSH 구성을, `WOL_LEGACY_SE
 `192.168.123.0/24`에서는 `BROADCAST=192.168.123.255`를 사용합니다. 값이 빠진 경우
 애플리케이션은 특정 사설망에 종속되지 않는 `255.255.255.255`를 사용합니다.
 
+## 현재 OS 기준 종료·재부팅
+
+`UBUNTU_BOOT_ENABLED=true`인 `UBUNTU_BOOT_TARGET`은 종료·재부팅 요청 시 현재 OS를 SSH로 확인합니다. Ubuntu는 `uname -s`의 `Linux`, Windows는 `probe-windows`의 `WINDOWS_READY_V1`을 검사하고, 확인된 alias에만 `shutdown` 또는 `reboot-windows`를 전송합니다. 다른 타겟은 기존 `targets.json` 명령을 사용합니다.
+
+OS 확인 실패 시 HTTP 503을 반환하며 다른 OS 명령을 추측해서 보내지 않습니다. 전원 명령은 `SHUTDOWN_ACCEPTED_V1` 또는 `REBOOT_ACCEPTED_V1` 응답이 있어야 성공으로 처리합니다. 응답과 로그의 `detected_os`에 선택된 OS가 기록됩니다. 재부팅 버튼은 현재 OS에서 Windows Boot Manager를 다음 부팅 대상으로 지정한 뒤 재부팅합니다. 별도 Ubuntu 부팅 기능은 기존 `reboot` 명령을 사용해 Ubuntu 선택 부팅을 유지합니다.
+
+Ubuntu 제한 SSH 구성은 `scripts/power/ubuntu-ssh-wrapper.sh`를 `/usr/local/libexec/portal-wol-ssh`, `ubuntu-power.sh`를 `/usr/local/sbin/portal-wol-power`에 root 소유로 설치합니다. `ubuntu-sudoers.example`은 두 전원 명령만 허용하며 `visudo -cf`로 검증한 뒤 적용합니다. 기존 WOL 키의 `from` 및 `restrict` 옵션을 유지하고 강제 명령만 새 래퍼 경로로 변경합니다. 일반 셸·추가 SSH 키·개인키는 필요하지 않습니다.
+
+Windows의 기존 제한 명령 래퍼는 기존 probe/BootNext/reboot 동작을 유지하면서 `scripts/power/windows-power-actions.ps1`을 같은 폴더에 설치하고 기존 래퍼의 함수 정의 뒤, 최상위 `try` 앞에서 dot-source합니다. 이 확장은 `shutdown`과 `reboot-windows`만 처리하며 기존 BootNext용 `reboot`는 그대로 둡니다. OS별 호스트 키는 기존 `/run/wol-ssh/config`의 alias별 고정 키를 계속 검증합니다.
+
 ## 타겟 저장소 구조 (`app/targets.json`)
 타겟의 IP/MAC/명령은 **`app/targets.json` 한 파일만** 사용합니다.  
 IP를 바꿀 때는 `ip` 필드만 수정하면 되고, 명령에서 `{ip}`, `{name}`, `{mac}` 템플릿을 사용할 수 있습니다.

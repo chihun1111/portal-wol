@@ -1,0 +1,2 @@
+# Install as /etc/sudoers.d/portal-wol-power after visudo -cf validation.
+chihun ALL=(root) NOPASSWD: /usr/local/sbin/portal-wol-power shutdown, /usr/local/sbin/portal-wol-power reboot-windows

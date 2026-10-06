@@ -168,8 +168,93 @@ def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
     }
 
 
+def _execute_current_os_command(name: str, action: str, settings: Any) -> Dict[str, Any]:
+    timeout = max(settings.ssh_command_timeout, 1)
+
+    def run_ssh(alias: str, command: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                "ssh", "-F", str(settings.wol_ssh_config),
+                "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                "-o", "PreferredAuthentications=publickey",
+                "-o", "IdentitiesOnly=yes", "-o", "NumberOfPasswordPrompts=0",
+                alias, command,
+            ],
+            shell=False, timeout=timeout, check=False, capture_output=True, text=True,
+        )
+
+    detected_os = None
+    alias = None
+    probes = []
+    for candidate_os, candidate_alias, probe, expected in (
+        ("ubuntu", settings.ubuntu_ssh_alias, "uname -s", "Linux"),
+        ("windows", settings.windows_ssh_alias, "probe-windows", "WINDOWS_READY_V1"),
+    ):
+        probe_audit = {"os": candidate_os, "alias": candidate_alias}
+        try:
+            result = run_ssh(candidate_alias, probe)
+        except subprocess.TimeoutExpired:
+            probes.append({**probe_audit, "error": "timeout", "timeout": timeout})
+            continue
+        except OSError as exc:
+            probes.append({**probe_audit, "error": "oserror", "message": trim_text(str(exc))})
+            continue
+        probes.append({
+            **probe_audit, "rc": result.returncode,
+            "stdout": trim_text(result.stdout or ""),
+            "stderr": trim_text(result.stderr or ""),
+        })
+        if result.returncode == 0 and (result.stdout or "").strip() == expected:
+            detected_os, alias = candidate_os, candidate_alias
+            break
+    audit = {"evt": action, "target": name, "from": "api", "detected_os": detected_os}
+    if alias is None:
+        log_event({**audit, "error": "os_unavailable", "probes": probes})
+        raise HTTPException(503, detail="current OS could not be verified over SSH")
+
+    remote_command = "reboot-windows" if action == "reboot" else action
+    if action == "reboot":
+        audit["reboot_destination"] = "windows"
+    description = f"ssh {alias} {remote_command}"
+    audit["command"] = description
+    try:
+        result = run_ssh(alias, remote_command)
+    except subprocess.TimeoutExpired as exc:
+        log_event({**audit, "error": "timeout", "timeout": timeout})
+        raise HTTPException(504, detail=f"{action} command timed out") from exc
+    except OSError as exc:
+        log_event({**audit, "error": "oserror", "message": str(exc)})
+        raise HTTPException(500, detail=f"{action} command failed to start") from exc
+
+    stdout, stderr = result.stdout or "", result.stderr or ""
+    expected = {"shutdown": "SHUTDOWN_ACCEPTED_V1", "reboot": "REBOOT_ACCEPTED_V1"}[action]
+    accepted = result.returncode == 0 and stdout.strip() == expected
+    log_event({
+        **audit, "rc": result.returncode, "stdout": trim_text(stdout),
+        "stderr": trim_text(stderr), "accepted": accepted,
+    })
+    if not accepted:
+        raise HTTPException(500, detail={
+            "error": f"{action} command was not acknowledged",
+            "detected_os": detected_os, "returncode": result.returncode,
+            "stdout": trim_text(stdout, 1000), "stderr": trim_text(stderr, 1000),
+        })
+    response = {
+        "ok": True, "action": action, "target": name, "detected_os": detected_os,
+        "returncode": result.returncode, "stdout": stdout, "stderr": stderr,
+        "command": description,
+    }
+    if action == "reboot":
+        response["reboot_destination"] = "windows"
+    return response
+
+
 def execute_target_command(name: str, action: str) -> Dict[str, Any]:
     target = get_target_or_404(name)
+    settings = get_settings()
+    if (settings.ubuntu_boot_enabled and name == settings.ubuntu_boot_target
+            and action in {"shutdown", "reboot"}):
+        return _execute_current_os_command(name, action, settings)
     spec = target.get(action)
     if spec is None:
         raise HTTPException(400, f"no {action} command configured for target")
