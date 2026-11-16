@@ -7,6 +7,7 @@ import { useBodyClass } from '../../_hooks/useBodyClass';
 import { useTheme } from '../../_hooks/useTheme';
 import { useLanguage, type TranslateFn } from '../../_i18n/LanguageProvider';
 import { getRequestErrorCode, getRequestErrorMessage, request } from '../../_lib/api';
+import { mapConcurrent, startPolling } from '../../_lib/async';
 import { EMPTY_TARGET_FORM, toTargetPayload, type TargetFormState } from '../../_lib/targets';
 import { ConfirmDeleteModal } from './_components/ConfirmDeleteModal';
 import { BootJobModal } from './_components/BootJobModal';
@@ -18,6 +19,7 @@ import { TargetsCard } from './_components/TargetsCard';
 import { ToastContainer } from './_components/ToastContainer';
 import { useToastQueue } from './_hooks/useToastQueue';
 import { ACTION_ENDPOINTS } from './_lib/constants';
+import { shouldApplyBootJobUpdate } from './_lib/bootJobs';
 import type {
   ApiLogRecord,
   BootJob,
@@ -31,16 +33,25 @@ import type {
   TargetsResponse
 } from './_lib/types';
 
-type RequestOptions = { silent?: boolean };
+type RequestOptions = { silent?: boolean; fresh?: boolean };
 
 type StatusOptions = { log?: boolean };
 
 const ACTION_LOG_LIMIT = 120;
+const READ_TIMEOUT_MS = 15_000;
 const POWER_ACTIONS: readonly PowerAction[] = ['wake', 'shutdown', 'reboot', 'boot_ubuntu'];
 const TERMINAL_BOOT_STAGES = new Set(['succeeded', 'failed', 'timed_out', 'cancelled']);
 
 function isPowerAction(value: unknown): value is PowerAction {
   return typeof value === 'string' && POWER_ACTIONS.includes(value as PowerAction);
+}
+
+function getMutationErrorMessage(error: unknown, fallback: string, t: TranslateFn): string {
+  const code = getRequestErrorCode(error);
+  if (code === 'target_busy' || code === 'active_boot_job') {
+    return t(`wol.boot.errors.${code}`);
+  }
+  return getRequestErrorMessage(error, fallback);
 }
 
 function normalizeTimestamp(value: unknown): string {
@@ -134,30 +145,51 @@ export default function WolPage() {
   const [confirmTarget, setConfirmTarget] = useState<Target | null>(null);
   const [pendingPowerAction, setPendingPowerAction] = useState<PendingPowerAction | null>(null);
   const [bootJob, setBootJob] = useState<BootJob | null>(null);
+  const bootJobRef = useRef<BootJob | null>(null);
+  const bootJobGenerationRef = useRef(0);
   const [bootJobStartedAt, setBootJobStartedAt] = useState<number | null>(null);
   const [bootCancelling, setBootCancelling] = useState(false);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
-  const loadingTargetsRef = useRef(false);
+  const actionInFlightRef = useRef(false);
+  const [targetSaving, setTargetSaving] = useState(false);
+  const targetSavingRef = useRef(false);
+  const [targetDeleting, setTargetDeleting] = useState(false);
+  const targetDeletingRef = useRef(false);
+  const bootCancellingRef = useRef(false);
+  const loadingTargetsRef = useRef<Promise<void> | null>(null);
   const statusRefreshingRef = useRef(false);
+  const statusAbortRef = useRef<AbortController | null>(null);
   const handledBootJobsRef = useRef<Set<string>>(new Set());
+  const logsGenerationRef = useRef(0);
+
+  useEffect(() => () => {
+    statusAbortRef.current?.abort();
+    logsGenerationRef.current++;
+  }, []);
 
   const appendLog = useCallback((entry: LogEntry) => {
+    logsGenerationRef.current++;
     setLogs((prev) => [entry, ...prev].slice(0, ACTION_LOG_LIMIT));
   }, []);
 
   const updateLog = useCallback((id: string, patch: Partial<LogEntry>) => {
+    logsGenerationRef.current++;
     setLogs((prev) => prev.map((log) => (log.id === id ? { ...log, ...patch } : log)));
   }, []);
 
   const clearLogs = useCallback(() => {
+    logsGenerationRef.current++;
     setLogs([]);
   }, []);
 
   const loadLogs = useCallback(async () => {
+    const generation = ++logsGenerationRef.current;
     try {
-      const data = await request<LogsResponse>(`api/logs?limit=${ACTION_LOG_LIMIT}`);
+      const data = await request<LogsResponse>(`api/logs?limit=${ACTION_LOG_LIMIT}`, { timeoutMs: READ_TIMEOUT_MS });
+      if (generation !== logsGenerationRef.current) return;
       const persistedLogs = mapApiLogsToEntries(data?.logs, t);
       setLogs((prev) => {
+        if (generation !== logsGenerationRef.current) return prev;
         const pendingLogs = prev.filter((entry) => entry.status === 'pending');
         if (!pendingLogs.length) {
           return persistedLogs;
@@ -169,25 +201,31 @@ export default function WolPage() {
     }
   }, [t]);
 
-  useEffect(() => {
-    targetsRef.current = targets;
-  }, [targets]);
-
-  const loadTargets = useCallback(async ({ silent = false }: RequestOptions = {}) => {
-    if (loadingTargetsRef.current) return;
-    loadingTargetsRef.current = true;
-    try {
-      const data = await request<TargetsResponse>('api/targets');
-      const list = Array.isArray(data?.targets) ? data.targets : [];
-      setTargets(list);
-      if (!silent) {
-        showToast(t('wol.toasts.targetsLoaded'), 'success');
+  const loadTargets = useCallback(async ({ silent = false, fresh = false }: RequestOptions = {}) => {
+    // A mutation needs a read that starts after it finishes, even if a poll is in flight.
+    while (loadingTargetsRef.current) {
+      await loadingTargetsRef.current;
+      if (!fresh) return;
+    }
+    const pending = (async () => {
+      try {
+        const data = await request<TargetsResponse>('api/targets', { timeoutMs: READ_TIMEOUT_MS });
+        const list = Array.isArray(data?.targets) ? data.targets : [];
+        targetsRef.current = list;
+        setTargets(list);
+        if (!silent) {
+          showToast(t('wol.toasts.targetsLoaded'), 'success');
+        }
+      } catch (error) {
+        console.error(error);
+        showToast(t('wol.toasts.targetsLoadFailed'), 'error');
       }
-    } catch (error) {
-      console.error(error);
-      showToast(t('wol.toasts.targetsLoadFailed'), 'error');
+    })();
+    loadingTargetsRef.current = pending;
+    try {
+      await pending;
     } finally {
-      loadingTargetsRef.current = false;
+      loadingTargetsRef.current = null;
     }
   }, [showToast, t]);
 
@@ -195,21 +233,33 @@ export default function WolPage() {
     if (statusRefreshingRef.current || !targetsRef.current.length) {
       return;
     }
+    if (!log && document.hidden) return;
     statusRefreshingRef.current = true;
+    const controller = new AbortController();
+    statusAbortRef.current = controller;
     const silentParam = log ? 'false' : 'true';
     try {
-      for (const target of targetsRef.current) {
+      const results = await mapConcurrent([...targetsRef.current], 4, async (target) => {
+        if (controller.signal.aborted) return false;
         try {
-          await request(`api/status?target=${encodeURIComponent(target.name)}&silent=${silentParam}`);
+          await request(`api/status?target=${encodeURIComponent(target.name)}&silent=${silentParam}`, {
+            signal: controller.signal,
+            timeoutMs: READ_TIMEOUT_MS
+          });
+          return true;
         } catch (error) {
-          console.warn('status error', target.name, error);
+          if (!controller.signal.aborted) console.warn('status error', target.name, error);
+          return false;
         }
-      }
-      await loadTargets({ silent: true });
+      });
+      if (controller.signal.aborted) return;
+      await loadTargets({ silent: true, fresh: true });
       if (log) {
-        showToast(t('wol.toasts.statusesRefreshed'), 'success');
+        const failed = results.some((success) => !success);
+        showToast(t(failed ? 'wol.toasts.statusesRefreshFailed' : 'wol.toasts.statusesRefreshed'), failed ? 'warning' : 'success');
       }
     } finally {
+      statusAbortRef.current = null;
       statusRefreshingRef.current = false;
     }
   }, [loadTargets, showToast, t]);
@@ -224,6 +274,8 @@ export default function WolPage() {
 
   const applyBootJobUpdate = useCallback(
     (job: BootJob) => {
+      if (!shouldApplyBootJobUpdate(bootJobRef.current, job)) return;
+      bootJobRef.current = job;
       setBootJob(job);
       if (!job.terminal || handledBootJobsRef.current.has(job.id)) {
         return;
@@ -242,12 +294,14 @@ export default function WolPage() {
   );
 
   const restoreActiveBootJob = useCallback(async () => {
+    const generation = bootJobGenerationRef.current;
     try {
-      const data = await request<BootJobsResponse>('api/jobs?target=mainpc&limit=20');
+      const data = await request<BootJobsResponse>('api/jobs?limit=20', { timeoutMs: READ_TIMEOUT_MS });
       const active = data.jobs?.find((job) => !job.terminal);
-      if (active) {
+      if (active && !bootJobRef.current && generation === bootJobGenerationRef.current) {
         const createdAt = new Date(active.created_at).getTime();
         setBootJobStartedAt(Number.isNaN(createdAt) ? Date.now() : createdAt);
+        bootJobRef.current = active;
         setBootJob(active);
       }
     } catch (error) {
@@ -259,21 +313,25 @@ export default function WolPage() {
     restoreActiveBootJob();
   }, [restoreActiveBootJob]);
 
+  const bootJobId = bootJob?.id;
+  const bootJobTerminal = bootJob?.terminal;
+
   useEffect(() => {
-    if (!bootJob || bootJob.terminal) {
+    if (!bootJobId || bootJobTerminal) {
       return;
     }
-    const poll = async () => {
+    return startPolling(async (signal) => {
       try {
-        const data = await request<BootJobResponse>(`api/jobs/${encodeURIComponent(bootJob.id)}`);
-        applyBootJobUpdate(data.job);
+        const data = await request<BootJobResponse>(`api/jobs/${encodeURIComponent(bootJobId)}`, {
+          signal,
+          timeoutMs: READ_TIMEOUT_MS
+        });
+        if (!signal.aborted) applyBootJobUpdate(data.job);
       } catch (error) {
-        console.warn('boot job poll error', error);
+        if (!signal.aborted) console.warn('boot job poll error', error);
       }
-    };
-    const interval = window.setInterval(poll, 2000);
-    return () => window.clearInterval(interval);
-  }, [applyBootJobUpdate, bootJob]);
+    }, 2000);
+  }, [applyBootJobUpdate, bootJobId, bootJobTerminal]);
 
   useEffect(() => {
     if (!targets.length) {
@@ -296,6 +354,7 @@ export default function WolPage() {
   }, [filter, targets]);
 
   const closeTargetModal = useCallback(() => {
+    if (targetSavingRef.current) return;
     setTargetModalOpen(false);
     setEditingTarget(null);
   }, []);
@@ -327,6 +386,7 @@ export default function WolPage() {
   const handleTargetSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
+      if (targetSavingRef.current) return;
       const payload = toTargetPayload(targetForm, {
         includeEmptyMac: targetModalMode === 'edit'
       });
@@ -337,6 +397,8 @@ export default function WolPage() {
         return;
       }
 
+      targetSavingRef.current = true;
+      setTargetSaving(true);
       try {
         if (targetModalMode === 'edit' && editingTarget) {
           await request(`api/targets/${encodeURIComponent(editingTarget.name)}`, {
@@ -351,37 +413,45 @@ export default function WolPage() {
           });
           showToast(t('wol.toasts.targetAdded'), 'success');
         }
-        closeTargetModal();
+        setTargetModalOpen(false);
         setEditingTarget(null);
         setTargetError('');
         setTargetForm(EMPTY_TARGET_FORM);
-        await loadTargets({ silent: true });
+        await loadTargets({ silent: true, fresh: true });
       } catch (error) {
         console.error(error);
-        setTargetError(getRequestErrorMessage(error, t('wol.toasts.saveFailed')));
+        setTargetError(getMutationErrorMessage(error, t('wol.toasts.saveFailed'), t));
+      } finally {
+        targetSavingRef.current = false;
+        setTargetSaving(false);
       }
     },
-    [closeTargetModal, editingTarget, loadTargets, showToast, t, targetForm, targetModalMode]
+    [editingTarget, loadTargets, showToast, t, targetForm, targetModalMode]
   );
 
   const handleDelete = useCallback(async () => {
-    if (!confirmTarget) {
+    if (!confirmTarget || targetDeletingRef.current) {
       return;
     }
+    targetDeletingRef.current = true;
+    setTargetDeleting(true);
     try {
       await request(`api/targets/${encodeURIComponent(confirmTarget.name)}`, { method: 'DELETE' });
       showToast(t('wol.toasts.targetDeleted'), 'success');
-      await loadTargets({ silent: true });
+      await loadTargets({ silent: true, fresh: true });
     } catch (error) {
       console.error(error);
       showToast(t('wol.toasts.deleteFailed'), 'error');
     } finally {
+      targetDeletingRef.current = false;
+      setTargetDeleting(false);
       setConfirmTarget(null);
     }
   }, [confirmTarget, loadTargets, showToast, t]);
 
   const handleAction = useCallback(
     async (target: Target, action: DirectPowerAction) => {
+      if (actionInFlightRef.current) return;
       if (action === 'wake' && !target.has_mac) {
         showToast(t('wol.toasts.macRequired'), 'warning');
         return;
@@ -391,6 +461,7 @@ export default function WolPage() {
         return;
       }
       const key = `${action}:${target.name}`;
+      actionInFlightRef.current = true;
       const logId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const actionLabel = t(`wol.actions.labels.${action}`);
       setActionLoadingKey(key);
@@ -413,17 +484,18 @@ export default function WolPage() {
           message: successMessage
         });
         showToast(successMessage, 'success');
-        await loadTargets({ silent: true });
+        await loadTargets({ silent: true, fresh: true });
       } catch (error) {
         console.error(error);
         const failureMessage = t('wol.actions.failure', { action: actionLabel });
-        const message = getRequestErrorMessage(error, failureMessage);
+        const message = getMutationErrorMessage(error, failureMessage, t);
         updateLog(logId, {
           status: 'error',
           message
         });
         showToast(message, 'error');
       } finally {
+        actionInFlightRef.current = false;
         setActionLoadingKey(null);
       }
     },
@@ -432,6 +504,7 @@ export default function WolPage() {
 
   const requestDirectAction = useCallback(
     (target: Target, action: DirectPowerAction) => {
+      if (actionInFlightRef.current) return;
       if (action === 'wake') {
         handleAction(target, action);
         return;
@@ -443,6 +516,9 @@ export default function WolPage() {
 
   const startBootUbuntu = useCallback(
     async (target: Target) => {
+      if (actionInFlightRef.current) return;
+      actionInFlightRef.current = true;
+      bootJobGenerationRef.current++;
       const key = `boot_ubuntu:${target.name}`;
       setBootJobStartedAt(Date.now());
       setActionLoadingKey(key);
@@ -451,6 +527,7 @@ export default function WolPage() {
           method: 'POST',
           body: { target: target.name }
         });
+        bootJobRef.current = data.job;
         setBootJob(data.job);
         showToast(t('wol.boot.started', { target: target.name }), 'info');
       } catch (error) {
@@ -460,6 +537,7 @@ export default function WolPage() {
         const errorCode = getRequestErrorCode(error);
         showToast(errorCode ? t(`wol.boot.errors.${errorCode}`) : t('wol.boot.startFailed'), 'error');
       } finally {
+        actionInFlightRef.current = false;
         setActionLoadingKey(null);
       }
     },
@@ -478,7 +556,8 @@ export default function WolPage() {
   }, [handleAction, pendingPowerAction, startBootUbuntu]);
 
   const cancelBootJob = useCallback(async () => {
-    if (!bootJob || !bootJob.can_cancel || bootJob.terminal) return;
+    if (!bootJob || !bootJob.can_cancel || bootJob.terminal || bootCancellingRef.current) return;
+    bootCancellingRef.current = true;
     setBootCancelling(true);
     try {
       const data = await request<BootJobResponse>(`api/jobs/${encodeURIComponent(bootJob.id)}/cancel`, {
@@ -489,6 +568,7 @@ export default function WolPage() {
       const errorCode = getRequestErrorCode(error);
       showToast(errorCode ? t(`wol.boot.errors.${errorCode}`) : t('wol.boot.cancelFailed'), 'error');
     } finally {
+      bootCancellingRef.current = false;
       setBootCancelling(false);
     }
   }, [applyBootJobUpdate, bootJob, showToast, t]);
@@ -522,12 +602,18 @@ export default function WolPage() {
         mode={targetModalMode}
         form={targetForm}
         error={targetError}
+        saving={targetSaving}
         onChange={setTargetForm}
         onClose={closeTargetModal}
         onSubmit={handleTargetSubmit}
       />
 
-      <ConfirmDeleteModal target={confirmTarget} onConfirm={handleDelete} onCancel={() => setConfirmTarget(null)} />
+      <ConfirmDeleteModal
+        target={confirmTarget}
+        deleting={targetDeleting}
+        onConfirm={handleDelete}
+        onCancel={() => { if (!targetDeletingRef.current) setConfirmTarget(null); }}
+      />
       <ConfirmPowerModal
         pending={pendingPowerAction}
         onConfirm={confirmPowerAction}
@@ -539,6 +625,8 @@ export default function WolPage() {
         cancelling={bootCancelling}
         onCancel={cancelBootJob}
         onClose={() => {
+          bootJobGenerationRef.current++;
+          bootJobRef.current = null;
           setBootJob(null);
           setBootJobStartedAt(null);
         }}

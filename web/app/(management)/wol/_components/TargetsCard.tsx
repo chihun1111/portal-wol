@@ -112,7 +112,7 @@ export function TargetsCard({
                         className="btn small"
                         data-action="wake"
                         data-name={target.name}
-                        disabled={wakeDisabled}
+                        disabled={wakeDisabled || Boolean(actionLoadingKey)}
                         title={wakeDisabled ? wakeDisabledLabel : wakeTitle}
                         data-loading={actionLoadingKey === wakeKey ? 'true' : undefined}
                         onClick={() => onAction(target, 'wake')}
@@ -122,6 +122,7 @@ export function TargetsCard({
                       <button
                         className="btn small secondary"
                         data-action="shutdown"
+                        disabled={Boolean(actionLoadingKey)}
                         data-name={target.name}
                         data-loading={actionLoadingKey === shutdownKey ? 'true' : undefined}
                         onClick={() => onAction(target, 'shutdown')}
@@ -131,6 +132,7 @@ export function TargetsCard({
                       <button
                         className="btn small secondary"
                         data-action="reboot"
+                        disabled={Boolean(actionLoadingKey)}
                         data-name={target.name}
                         data-loading={actionLoadingKey === rebootKey ? 'true' : undefined}
                         onClick={() => onAction(target, 'reboot')}
@@ -141,6 +143,7 @@ export function TargetsCard({
                         <button
                           className="btn small primary"
                           data-action="boot_ubuntu"
+                          disabled={Boolean(actionLoadingKey)}
                           data-name={target.name}
                           data-loading={actionLoadingKey === bootUbuntuKey ? 'true' : undefined}
                           onClick={() => onBootUbuntu(target)}

@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { readPreference, writePreference } from '../_lib/storage';
 
 import en from './translations/en.json';
 import ko from './translations/ko.json';
@@ -71,7 +72,7 @@ function createTranslator(language: Language): TranslateFn {
 
 function getInitialLanguage(): Language {
   if (typeof window !== 'undefined') {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const stored = readPreference(STORAGE_KEY);
     if (stored === 'en' || stored === 'ko') {
       return stored;
     }
@@ -87,7 +88,8 @@ function getInitialLanguage(): Language {
 }
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() => getInitialLanguage());
+  // Match the statically exported Korean HTML before applying browser preferences.
+  const [language, setLanguageState] = useState<Language>('ko');
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -107,7 +109,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       document.documentElement.lang = language;
     }
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem(STORAGE_KEY, language);
+      writePreference(STORAGE_KEY, language);
     }
   }, [hydrated, language]);
 

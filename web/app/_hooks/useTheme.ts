@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { readPreference, writePreference } from '../_lib/storage';
 
 type ThemeMode = 'light' | 'dark';
 
@@ -14,22 +15,20 @@ export function useTheme() {
     if (typeof window === 'undefined') {
       return;
     }
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const stored = readPreference(STORAGE_KEY);
     const resolved = stored === 'light' ? 'light' : 'dark';
     setThemeState(resolved);
-    document.documentElement.setAttribute('data-theme', resolved);
     setReady(true);
   }, []);
 
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.setAttribute('data-theme', theme);
+    writePreference(STORAGE_KEY, theme);
+  }, [ready, theme]);
+
   const applyTheme = useCallback((value: ThemeMode | ((prev: ThemeMode) => ThemeMode)) => {
-    setThemeState((prev) => {
-      const next = typeof value === 'function' ? value(prev) : value;
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(STORAGE_KEY, next);
-        document.documentElement.setAttribute('data-theme', next);
-      }
-      return next;
-    });
+    setThemeState(value);
   }, []);
 
   const toggleTheme = useCallback(() => {

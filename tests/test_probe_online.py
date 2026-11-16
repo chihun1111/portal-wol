@@ -1,4 +1,5 @@
 from app import config
+import subprocess
 
 
 def test_probe_online_uses_ping_first(monkeypatch):
@@ -17,3 +18,12 @@ def test_probe_online_returns_false_when_all_checks_fail(monkeypatch):
     monkeypatch.setattr(config, "ping_once", lambda _ip: False)
     monkeypatch.setattr(config, "tcp_port_open", lambda *_args, **_kwargs: False)
     assert not config.probe_online("192.168.0.10", ports=(3389, 22))
+
+
+def test_stuck_ping_has_an_outer_process_timeout(monkeypatch):
+    def stuck_ping(cmd, **kwargs):
+        assert kwargs["timeout"] == 3
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(config.subprocess, "call", stuck_ping)
+    assert config.ping_once("192.0.2.10") is False

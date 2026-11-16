@@ -10,12 +10,13 @@ type TargetModalProps = {
   mode: 'create' | 'edit';
   form: TargetFormState;
   error: string;
+  saving: boolean;
   onChange: (form: TargetFormState) => void;
   onClose: () => void;
   onSubmit: FormEventHandler<HTMLFormElement>;
 };
 
-export function TargetModal({ open, mode, form, error, onChange, onClose, onSubmit }: TargetModalProps) {
+export function TargetModal({ open, mode, form, error, saving, onChange, onClose, onSubmit }: TargetModalProps) {
   const { t } = useLanguage();
 
   if (!open) {
@@ -43,6 +44,7 @@ export function TargetModal({ open, mode, form, error, onChange, onClose, onSubm
             <span>{t('wol.targetModal.fields.name')}</span>
             <input
               name="name"
+              disabled={saving}
               value={form.name}
               onChange={(event) => onChange({ ...form, name: event.target.value })}
               required
@@ -57,6 +59,7 @@ export function TargetModal({ open, mode, form, error, onChange, onClose, onSubm
             <span>{t('wol.targetModal.fields.ip')}</span>
             <input
               name="ip"
+              disabled={saving}
               value={form.ip}
               onChange={(event) => onChange({ ...form, ip: event.target.value })}
               required
@@ -70,6 +73,7 @@ export function TargetModal({ open, mode, form, error, onChange, onClose, onSubm
               <span>{t('wol.targetModal.fields.mac')}</span>
               <input
                 name="mac"
+                disabled={saving}
                 value={form.mac}
                 onChange={(event) => onChange({ ...form, mac: event.target.value })}
                 placeholder={t('wol.targetModal.fields.macPlaceholder')}
@@ -82,10 +86,10 @@ export function TargetModal({ open, mode, form, error, onChange, onClose, onSubm
             {error}
           </p>
           <div className="modal-actions">
-            <button type="submit" className="btn primary" id="target-save">
+            <button type="submit" className="btn primary" id="target-save" disabled={saving} data-loading={saving ? 'true' : undefined}>
               {t('wol.targetModal.actions.save')}
             </button>
-            <button type="button" className="btn ghost" onClick={onClose}>
+            <button type="button" className="btn ghost" onClick={onClose} disabled={saving}>
               {t('wol.targetModal.actions.cancel')}
             </button>
           </div>

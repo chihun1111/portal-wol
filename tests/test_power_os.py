@@ -144,3 +144,21 @@ def test_legacy_power_commands_are_preserved(setup_power, monkeypatch, enabled, 
     assert result["ok"] is True
     assert "detected_os" not in result
     assert calls == [["legacy-shutdown"]]
+
+
+def test_canonical_target_name_cannot_bypass_current_os_verification(setup_power, monkeypatch):
+    monkeypatch.setattr(power, "get_target_or_404", lambda _name: {
+        "name": "mainpc", "shutdown": ["legacy-shutdown"],
+    })
+    commands = []
+
+    def run(cmd, **_kwargs):
+        commands.append(cmd[-1])
+        return completed("Linux" if cmd[-1] == "uname -s" else "SHUTDOWN_ACCEPTED_V1")
+
+    monkeypatch.setattr(power.subprocess, "run", run)
+    result = power.execute_target_command(" MAINPC ", "shutdown")
+
+    assert result["target"] == "mainpc"
+    assert result["detected_os"] == "ubuntu"
+    assert commands == ["uname -s", "shutdown"]

@@ -5,9 +5,10 @@ export type RequestError = Error & {
 
 export type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
+  timeoutMs?: number;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE ?? '').replace(/\/+$/, '');
 
 function resolveMessage(value: unknown): string | undefined {
   if (typeof value === 'string') {
@@ -46,6 +47,7 @@ export function getRequestErrorCode(error: unknown): string | undefined {
 }
 
 export async function request<T = unknown>(path: string, init: RequestOptions = {}): Promise<T> {
+  const { timeoutMs, signal, ...fetchOptions } = init;
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const url = `${API_BASE}${normalizedPath}`;
   const headers = new Headers(init.headers);
@@ -68,24 +70,40 @@ export async function request<T = unknown>(path: string, init: RequestOptions = 
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(url, { ...init, headers, body });
-  const text = await response.text();
-  let payload: unknown;
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) {
+    abort();
+  } else {
+    signal?.addEventListener('abort', abort, { once: true });
+  }
+  const timer = timeoutMs && timeoutMs > 0
+    ? setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs)
+    : undefined;
 
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = text;
+  try {
+    const response = await fetch(url, { ...fetchOptions, headers, body, signal: controller.signal });
+    const text = await response.text();
+    let payload: unknown;
+
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = text;
+      }
     }
-  }
 
-  if (!response.ok) {
-    const error = new Error('Request failed') as RequestError;
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
-  }
+    if (!response.ok) {
+      const error = new Error('Request failed') as RequestError;
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
 
-  return payload as T;
+    return payload as T;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+  }
 }

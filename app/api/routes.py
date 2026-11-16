@@ -101,7 +101,7 @@ async def legacy_settings_redirect() -> RedirectResponse:
 
 
 @router.get("/api/targets")
-async def list_targets_api():
+def list_targets_api():
     settings = get_settings()
     targets = list_targets()
     for target in targets:
@@ -113,25 +113,27 @@ async def list_targets_api():
 
 
 @router.post("/api/targets")
-async def create_target_api(body: TargetCreateBody):
+def create_target_api(body: TargetCreateBody):
     target = create_target(body.model_dump())
     return {"target": target}
 
 
 @router.patch("/api/targets/{name}")
-async def update_target_api(name: str, body: TargetUpdateBody):
-    target = update_target(name, {k: v for k, v in body.model_dump().items() if v is not None})
+def update_target_api(name: str, body: TargetUpdateBody, request: Request):
+    with request.app.state.boot_jobs.power_action(name) as canonical_name:
+        target = update_target(canonical_name, body.model_dump(exclude_unset=True))
     return {"target": target}
 
 
 @router.delete("/api/targets/{name}")
-async def delete_target_api(name: str):
-    delete_target(name)
+def delete_target_api(name: str, request: Request):
+    with request.app.state.boot_jobs.power_action(name) as canonical_name:
+        delete_target(canonical_name)
     return {"ok": True}
 
 
 @router.get("/api/status")
-async def status(target: str, silent: bool = False):
+def status(target: str, silent: bool = False):
     info = get_target_or_404(target)
     ip = info.get("ip") or ""
     online = probe_online(ip)
@@ -142,22 +144,25 @@ async def status(target: str, silent: bool = False):
 
 
 @router.post("/api/wake")
-async def wake(body: WakeBody):
-    return wake_target(body.target)
+def wake(body: WakeBody, request: Request):
+    with request.app.state.boot_jobs.power_action(body.target) as target:
+        return wake_target(target)
 
 
 @router.post("/api/shutdown")
-async def shutdown(body: TargetActionBody):
-    return execute_target_command(body.target, "shutdown")
+def shutdown(body: TargetActionBody, request: Request):
+    with request.app.state.boot_jobs.power_action(body.target) as target:
+        return execute_target_command(target, "shutdown")
 
 
 @router.post("/api/reboot")
-async def reboot(body: TargetActionBody):
-    return execute_target_command(body.target, "reboot")
+def reboot(body: TargetActionBody, request: Request):
+    with request.app.state.boot_jobs.power_action(body.target) as target:
+        return execute_target_command(target, "reboot")
 
 
 @router.post("/api/boot/ubuntu", status_code=202)
-async def boot_ubuntu(body: TargetActionBody, request: Request):
+def boot_ubuntu(body: TargetActionBody, request: Request):
     actor = request.state.tailscale_user
     try:
         job = request.app.state.boot_jobs.create_job(body.target, actor)
@@ -170,17 +175,17 @@ async def boot_ubuntu(body: TargetActionBody, request: Request):
 
 
 @router.get("/api/jobs")
-async def list_jobs_api(request: Request, target: Optional[str] = None, limit: int = 20):
+def list_jobs_api(request: Request, target: Optional[str] = None, limit: int = 20):
     return {"jobs": request.app.state.boot_jobs.list_jobs(target=target, limit=limit)}
 
 
 @router.get("/api/jobs/{job_id}")
-async def get_job_api(job_id: str, request: Request):
+def get_job_api(job_id: str, request: Request):
     return {"job": request.app.state.boot_jobs.get_job(job_id)}
 
 
 @router.post("/api/jobs/{job_id}/cancel")
-async def cancel_job_api(job_id: str, request: Request):
+def cancel_job_api(job_id: str, request: Request):
     try:
         job = request.app.state.boot_jobs.cancel_job(job_id)
     except BootJobNotCancellableError as exc:
@@ -189,5 +194,5 @@ async def cancel_job_api(job_id: str, request: Request):
 
 
 @router.get("/api/logs")
-async def get_logs(limit: int = 200):
+def get_logs(limit: int = 200):
     return {"logs": read_logs(limit)}

@@ -13,14 +13,23 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 }
 
 Push-Location $webDir
-if (-not $SkipInstall -or -not (Test-Path (Join-Path $webDir "node_modules"))) {
-  npm install
+try {
+  if (-not $SkipInstall -or -not (Test-Path (Join-Path $webDir "node_modules"))) {
+    npm ci --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) {
+      throw "Frontend dependency installation failed (exit code $LASTEXITCODE)."
+    }
+  }
+  if (-not $env:NEXT_PUBLIC_API_BASE) {
+    $env:NEXT_PUBLIC_API_BASE = ""
+  }
+  npm run build
+  if ($LASTEXITCODE -ne 0) {
+    throw "Frontend build failed (exit code $LASTEXITCODE)."
+  }
+} finally {
+  Pop-Location
 }
-if (-not $env:NEXT_PUBLIC_API_BASE) {
-  $env:NEXT_PUBLIC_API_BASE = ""
-}
-npm run build
-Pop-Location
 
 if (-not (Test-Path $outDir)) {
   Write-Error "Build output not found at $outDir"

@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM node:20-bullseye-slim AS frontend-build
 WORKDIR /build/web
-COPY web/package.json ./
-RUN npm install --legacy-peer-deps --no-audit --no-fund
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY web ./
 ARG NEXT_PUBLIC_API_BASE=""
 ENV NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE}
@@ -11,7 +11,7 @@ RUN npm run build
 FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iputils-ping openssh-client \
+    && apt-get install -y --no-install-recommends iputils-ping iproute2 openssh-client \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .
