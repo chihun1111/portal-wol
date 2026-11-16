@@ -174,8 +174,30 @@ docker compose -f docker/compose.prod.yml up -d
 
 ## 테스트
 ```bash
-pytest -q
-cd web && npm run lint && npm run build
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+cd web
+npm ci --no-audit --no-fund
+npm test
+npm run lint
+npm run build
+```
+
+GitHub Actions에서도 Python 테스트와 프런트엔드 테스트·lint·정적 빌드를 실행합니다. 테스트는 임시 타겟·로그·작업 DB를 사용하며 실제 장비의 WOL/SSH 명령을 모의 처리합니다.
+
+### 성능 및 안정화 동작
+
+- 장비 상태 확인·전원 명령·파일/DB 처리는 작업 스레드에서 실행하므로 느린 장비가 `/healthz`를 막지 않습니다.
+- 화면의 상태 확인은 최대 4개씩 처리하며, 부팅 작업 폴링은 앞선 요청이 끝난 뒤 다음 요청을 예약합니다.
+- 같은 타겟의 전원 명령, 부팅 작업, 편집·삭제가 겹치면 `409`를 반환합니다. **현재 운영 구성처럼 Uvicorn worker는 1개로 유지**합니다. 타겟 예약은 프로세스 내에서 공유되며 여러 worker 사이의 잠금은 제공하지 않습니다.
+- 손상되거나 잘못된 타겟 JSON은 `503 targets_file_invalid`를 반환하고 원본을 보존합니다. 파일을 백업한 뒤 항목의 이름/IP/MAC 또는 중복 이름을 수정하면 다시 읽을 수 있습니다.
+- 일반 파일은 임시 파일과 원자적 교체로 저장합니다. 운영 Compose의 단일 파일 bind mount에서는 파일 직접 쓰기와 `fsync`를 사용하므로 실행 중 강제 전원 차단에 대한 원자성은 보장하지 않습니다.
+
+변경 이유, 검증 범위, 합성 로그 벤치마크는 [성능·안정화 기록](docs/stability-optimization.md)에 정리했습니다.
+
+```bash
+# 저장소 루트에서: 합성 로그 50,000건의 조회 결과와 메모리를 기준 커밋과 비교
+python scripts/benchmark_logs.py
 ```
 
 ## 프로젝트 구조

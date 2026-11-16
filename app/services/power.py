@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import socket
 import subprocess
 import time
@@ -76,8 +77,10 @@ def normalize_command_spec(spec: CommandType) -> Tuple[Union[List[str], str], bo
         if timeout_value is not None:
             try:
                 timeout = float(timeout_value)
-            except (TypeError, ValueError):
-                timeout = None
+            except (TypeError, ValueError) as exc:
+                raise ValueError("timeout must be a positive finite number") from exc
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError("timeout must be a positive finite number")
     elif isinstance(spec, list):
         cmd = spec
     else:
@@ -122,18 +125,29 @@ def send_magic_packet(
 def wake_target(name: str, audit: bool = True) -> Dict[str, Any]:
     settings = get_settings()
     target = get_target_or_404(name)
+    name = target["name"]
     mac = target.get("mac")
     if not mac and target.get("ip"):
         discovered = discover_mac_for_ip(target["ip"])
         if discovered:
-            updated = set_target_mac(name, discovered)
+            updated = set_target_mac(
+                name, discovered, expected_ip=target["ip"], only_if_missing=True,
+            )
             mac = updated.get("mac")
             target = updated
     if not mac:
         raise HTTPException(400, detail={"error": "no mac for target", "target": name})
     packet_count = 1
     if settings.wol_method == "etherwake":
-        rc = subprocess.call(["/usr/sbin/etherwake", "-i", settings.lan_iface, mac])
+        try:
+            rc = subprocess.call(
+                ["/usr/sbin/etherwake", "-i", settings.lan_iface, mac],
+                timeout=DEFAULT_COMMAND_TIMEOUT_SEC,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(504, detail="etherwake command timed out") from exc
+        except OSError as exc:
+            raise HTTPException(500, detail="etherwake command failed to start") from exc
         if rc != 0:
             raise HTTPException(500, "etherwake failed")
         method = "etherwake"
@@ -251,8 +265,9 @@ def _execute_current_os_command(name: str, action: str, settings: Any) -> Dict[s
 
 def execute_target_command(name: str, action: str) -> Dict[str, Any]:
     target = get_target_or_404(name)
+    name = target["name"]
     settings = get_settings()
-    if (settings.ubuntu_boot_enabled and name == settings.ubuntu_boot_target
+    if (settings.ubuntu_boot_enabled and name == settings.ubuntu_boot_target.strip().lower()
             and action in {"shutdown", "reboot"}):
         return _execute_current_os_command(name, action, settings)
     spec = target.get(action)

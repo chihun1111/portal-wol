@@ -2,7 +2,7 @@
 
 import type { Route } from 'next';
 import Link from 'next/link';
-import { FormEvent, Suspense, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useBodyClass } from '../_hooks/useBodyClass';
@@ -18,7 +18,7 @@ function isSafeInternalPath(path: string | null | undefined): path is `/${string
   if (!path) return false;
   if (!path.startsWith('/')) return false;
   if (path.startsWith('//')) return false;
-  if (/\s/.test(path)) return false;
+  if (/[\s\\]/.test(path)) return false;
   return true;
 }
 
@@ -42,6 +42,7 @@ function SettingsContent() {
   const [targetForm, setTargetForm] = useState<TargetFormState>(EMPTY_TARGET_FORM);
   const [targetStatus, setTargetStatus] = useState<TargetStatus>('idle');
   const [targetMessage, setTargetMessage] = useState('');
+  const targetSavingRef = useRef(false);
 
   const rawReturnTo = searchParams.get('returnTo');
   const returnTo = isSafeInternalPath(rawReturnTo) ? rawReturnTo : null;
@@ -114,6 +115,7 @@ function SettingsContent() {
 
   const handleTargetSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (targetSavingRef.current) return;
 
     const payload = toTargetPayload(targetForm);
     if (!payload) {
@@ -122,6 +124,7 @@ function SettingsContent() {
       return;
     }
 
+    targetSavingRef.current = true;
     setTargetStatus('saving');
     setTargetMessage('');
 
@@ -138,6 +141,8 @@ function SettingsContent() {
       console.error(error);
       setTargetStatus('error');
       setTargetMessage(getRequestErrorMessage(error, targetError));
+    } finally {
+      targetSavingRef.current = false;
     }
   };
 
@@ -215,6 +220,7 @@ function SettingsContent() {
                 <span className="settings-field__label">{t('wol.targetModal.fields.name')}</span>
                 <input
                   value={targetForm.name}
+                  disabled={targetStatus === 'saving'}
                   onChange={(event) => updateTargetForm({ name: event.target.value })}
                   required
                   minLength={2}
@@ -228,6 +234,7 @@ function SettingsContent() {
                 <span className="settings-field__label">{t('wol.targetModal.fields.ip')}</span>
                 <input
                   value={targetForm.ip}
+                  disabled={targetStatus === 'saving'}
                   onChange={(event) => updateTargetForm({ ip: event.target.value })}
                   required
                   placeholder={t('wol.targetModal.fields.ipPlaceholder')}
@@ -238,6 +245,7 @@ function SettingsContent() {
                 <span className="settings-field__label">{t('wol.targetModal.fields.mac')}</span>
                 <input
                   value={targetForm.mac}
+                  disabled={targetStatus === 'saving'}
                   onChange={(event) => updateTargetForm({ mac: event.target.value })}
                   placeholder={t('wol.targetModal.fields.macPlaceholder')}
                 />

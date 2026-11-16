@@ -14,7 +14,7 @@ Builds the Next.js frontend located in ./web and syncs the generated static
 artifacts into app/static so FastAPI can serve them.
 
 Options:
-  --skip-install   Skip running npm install (assumes node_modules already exists)
+  --skip-install   Skip running npm ci (assumes node_modules already exists)
 USAGE
 }
 
@@ -44,7 +44,7 @@ fi
 
 pushd "$WEB_DIR" >/dev/null
 if [[ "$SKIP_INSTALL" != "true" || ! -d node_modules ]]; then
-  npm install
+  npm ci --no-audit --no-fund
 fi
 : "${NEXT_PUBLIC_API_BASE:=}"
 export NEXT_PUBLIC_API_BASE

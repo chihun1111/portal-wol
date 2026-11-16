@@ -5,9 +5,10 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi import HTTPException
 
@@ -50,6 +51,7 @@ class BootJobManager:
         self.db_path = Path(self.settings.boot_db_path)
         self._lock = threading.RLock()
         self._runners: Dict[str, tuple[threading.Thread, threading.Event]] = {}
+        self._reserved_targets: set[str] = set()
         self._started = False
 
     def startup(self) -> None:
@@ -110,14 +112,19 @@ class BootJobManager:
         self._ensure_started()
         if not self.settings.ubuntu_boot_enabled:
             raise HTTPException(503, detail={"error": "ubuntu_boot_disabled"})
-        if target != self.settings.ubuntu_boot_target:
+        target = target.strip().lower()
+        if target != self.settings.ubuntu_boot_target.strip().lower():
             raise HTTPException(400, detail={"error": "unsupported_boot_target"})
-        get_target_or_404(target)
 
         with self._lock:
+            # Resolve and reserve together: an edit may have renamed/deleted
+            # the target while this request waited to acquire the manager lock.
+            target = get_target_or_404(target)["name"]
             active = self._get_active_locked(target)
             if active is not None:
                 raise ActiveBootJobError(active)
+            if target in self._reserved_targets:
+                raise HTTPException(409, detail={"error": "target_busy"})
             job_id = str(uuid.uuid4())
             now = self._now()
             with self._connect() as conn:
@@ -138,10 +145,35 @@ class BootJobManager:
                 daemon=True,
             )
             self._runners[job_id] = (thread, cancel_event)
+            self._reserved_targets.add(target)
             job = self.get_job(job_id)
             self._audit(job_id, target, actor, "queued")
-            thread.start()
+            try:
+                thread.start()
+            except RuntimeError as exc:
+                self._runners.pop(job_id, None)
+                self._reserved_targets.discard(target)
+                self._fail(job_id, "internal_error")
+                raise HTTPException(503, detail={"error": "boot_job_start_failed"}) from exc
         return job
+
+    @contextmanager
+    def power_action(self, target: str) -> Iterator[str]:
+        """Reserve one target without blocking job reads or other targets."""
+        self._ensure_started()
+        with self._lock:
+            target = get_target_or_404(target)["name"]
+            active = self._get_active_locked(target)
+            if active is not None:
+                raise HTTPException(409, detail={"error": "active_boot_job", "job": active})
+            if target in self._reserved_targets:
+                raise HTTPException(409, detail={"error": "target_busy"})
+            self._reserved_targets.add(target)
+        try:
+            yield target
+        finally:
+            with self._lock:
+                self._reserved_targets.discard(target)
 
     def get_job(self, job_id: str) -> Dict[str, Any]:
         self._ensure_started()
@@ -191,10 +223,17 @@ class BootJobManager:
             )
             return self.get_job(job_id)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            # sqlite3's own context manager commits/rolls back, but does not
+            # close the connection. Polling jobs must not retain DB handles.
+            conn.close()
 
     def _ensure_started(self) -> None:
         if not self._started:
@@ -296,26 +335,30 @@ class BootJobManager:
     ) -> None:
         deadline = time.monotonic() + max(self.settings.boot_job_timeout, 1)
         try:
-            self._transition(
+            if not self._transition(
                 job_id,
                 state="running",
                 stage="detecting_os",
                 can_cancel=True,
-            )
+            ):
+                return
             if self._is_cancelled(job_id, cancel_event):
                 return
             if self._probe_ubuntu():
                 self._succeed(job_id)
                 return
+            if self._is_cancelled(job_id, cancel_event):
+                return
 
             windows_ready = self._probe_windows()
             if not windows_ready:
-                self._transition(
+                if not self._transition(
                     job_id,
                     state="running",
                     stage="waking",
                     can_cancel=True,
-                )
+                ):
+                    return
                 if self._is_cancelled(job_id, cancel_event):
                     return
                 try:
@@ -325,12 +368,13 @@ class BootJobManager:
                 except Exception:
                     self._fail(job_id, "wake_failed")
                     return
-                self._transition(
+                if not self._transition(
                     job_id,
                     state="running",
                     stage="waiting_for_windows",
                     can_cancel=True,
-                )
+                ):
+                    return
                 phase_deadline = min(
                     deadline,
                     time.monotonic() + max(self.settings.windows_ready_timeout, 1),
@@ -352,12 +396,13 @@ class BootJobManager:
             # _probe_windows performs a real key-only SSH login and requires the
             # restricted Windows wrapper's exact readiness token. Do not set
             # BootNext until that authenticated login has completed.
-            self._transition(
+            if not self._transition(
                 job_id,
                 state="running",
                 stage="windows_login_ready",
                 can_cancel=True,
-            )
+            ):
+                return
 
             if time.monotonic() >= deadline:
                 self._timeout(job_id, "job_timeout")
@@ -365,22 +410,26 @@ class BootJobManager:
             if self._is_cancelled(job_id, cancel_event):
                 return
 
-            self._transition(
+            # Transition and cancellation use the same lock. Only a successful
+            # transition may cross into the non-cancellable physical actions.
+            if not self._transition(
                 job_id,
                 state="running",
                 stage="setting_bootnext",
                 can_cancel=False,
-            )
+            ):
+                return
             if not self._windows_command("set-ubuntu-once"):
                 self._fail(job_id, "bootnext_set_failed")
                 return
 
-            self._transition(
+            if not self._transition(
                 job_id,
                 state="running",
                 stage="rebooting",
                 can_cancel=False,
-            )
+            ):
+                return
             reboot_accepted = self._windows_command("reboot")
             saw_windows_down = False
             if not reboot_accepted:
@@ -397,12 +446,13 @@ class BootJobManager:
                     return
                 saw_windows_down = observation == "down"
 
-            self._transition(
+            if not self._transition(
                 job_id,
                 state="running",
                 stage="waiting_for_ubuntu",
                 can_cancel=False,
-            )
+            ):
+                return
             ubuntu_deadline = min(
                 deadline,
                 time.monotonic() + max(self.settings.ubuntu_ready_timeout, 1),
@@ -438,6 +488,7 @@ class BootJobManager:
         finally:
             with self._lock:
                 self._runners.pop(job_id, None)
+                self._reserved_targets.discard(target)
 
     def _is_cancelled(self, job_id: str, cancel_event: threading.Event) -> bool:
         if not cancel_event.is_set():

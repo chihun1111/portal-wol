@@ -4,9 +4,10 @@ import time
 from dataclasses import replace
 
 import pytest
+from fastapi import HTTPException
 
 from app.core.settings import get_settings
-from app.services import boot_jobs
+from app.services import boot_jobs, targets
 from app.services.boot_jobs import ActiveBootJobError, BootJobManager, BootJobNotCancellableError
 
 
@@ -34,6 +35,10 @@ def wait_for_terminal(manager, job_id, timeout=3):
     while time.monotonic() < deadline:
         job = manager.get_job(job_id)
         if job["terminal"]:
+            runner = manager._runners.get(job_id)
+            if runner is not None:
+                runner[0].join(timeout=max(deadline - time.monotonic(), 0))
+                assert not runner[0].is_alive()
             return job
         time.sleep(0.01)
     raise AssertionError("boot job did not finish")
@@ -151,6 +156,7 @@ def test_duplicate_job_is_rejected_and_early_job_can_be_cancelled(tmp_path, monk
     monkeypatch.setattr(boot_jobs, "wake_target", lambda *_args, **_kwargs: None)
 
     first = manager.create_job("mainpc", "user@example.com")
+    runner = manager._runners[first["id"]][0]
     with pytest.raises(ActiveBootJobError) as exc_info:
         manager.create_job("mainpc", "other@example.com")
     assert exc_info.value.job["id"] == first["id"]
@@ -158,6 +164,8 @@ def test_duplicate_job_is_rejected_and_early_job_can_be_cancelled(tmp_path, monk
     cancelled = manager.cancel_job(first["id"])
     assert cancelled["state"] == "cancelled"
     assert cancelled["terminal"] is True
+    runner.join(timeout=1)
+    assert not runner.is_alive()
 
 
 def test_startup_marks_interrupted_jobs_failed(tmp_path):
@@ -319,3 +327,165 @@ def test_feature_flag_and_target_are_enforced(tmp_path):
     with pytest.raises(Exception) as target_error:
         enabled.create_job("otherpc", "user@example.com")
     assert target_error.value.status_code == 400
+
+
+def test_cancellation_winning_bootnext_transition_prevents_power_commands(tmp_path, monkeypatch):
+    manager = make_manager(tmp_path)
+    commands = []
+    transition = manager._transition
+    monkeypatch.setattr(manager, "_probe_ubuntu", lambda: False)
+    monkeypatch.setattr(manager, "_probe_windows", lambda: True)
+    monkeypatch.setattr(manager, "_windows_command", lambda command: commands.append(command) or True)
+    # Run synchronously so all side effects have completed before asserting.
+    monkeypatch.setattr(boot_jobs.threading.Thread, "start", lambda thread: thread.run())
+
+    def cancel_before_transition(job_id, **kwargs):
+        if kwargs["stage"] == "setting_bootnext":
+            assert manager.cancel_job(job_id)["state"] == "cancelled"
+        return transition(job_id, **kwargs)
+
+    monkeypatch.setattr(manager, "_transition", cancel_before_transition)
+    job = manager.create_job("mainpc", "user@example.com")
+
+    assert manager.get_job(job["id"])["state"] == "cancelled"
+    assert commands == []
+
+
+def test_thread_start_failure_finishes_job_and_allows_retry(tmp_path, monkeypatch):
+    manager = make_manager(tmp_path)
+
+    def fail_start(_thread):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(boot_jobs.threading.Thread, "start", fail_start)
+    with pytest.raises(HTTPException) as exc_info:
+        manager.create_job("mainpc", "user@example.com")
+    assert exc_info.value.status_code == 503
+    failed = manager.list_jobs()[0]
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "internal_error"
+    assert manager._runners == {}
+
+    monkeypatch.setattr(boot_jobs.threading.Thread, "start", lambda thread: thread.run())
+    monkeypatch.setattr(manager, "_probe_ubuntu", lambda: True)
+    retry = manager.create_job("mainpc", "user@example.com")
+    assert manager.get_job(retry["id"])["state"] == "succeeded"
+
+
+def test_database_connections_are_closed_after_reads_and_errors(tmp_path):
+    manager = make_manager(tmp_path)
+    with manager._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM boot_jobs").fetchone()[0] == 0
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
+
+    with pytest.raises(RuntimeError, match="abort transaction"):
+        with manager._connect() as failed_conn:
+            failed_conn.execute("CREATE TABLE IF NOT EXISTS rollback_check (value TEXT)")
+            failed_conn.execute("INSERT INTO rollback_check VALUES ('uncommitted')")
+            raise RuntimeError("abort transaction")
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        failed_conn.execute("SELECT 1")
+    with manager._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM rollback_check").fetchone()[0] == 0
+
+
+def test_power_actions_reserve_canonical_target_and_release_on_error(tmp_path):
+    manager = make_manager(tmp_path)
+    with pytest.raises(RuntimeError, match="command failed"):
+        with manager.power_action(" MAINPC ") as target:
+            assert target == "mainpc"
+            with pytest.raises(HTTPException) as duplicate:
+                with manager.power_action("mainpc"):
+                    pytest.fail("a duplicate action must not run")
+            assert duplicate.value.status_code == 409
+            assert duplicate.value.detail["error"] == "target_busy"
+            with pytest.raises(HTTPException) as boot_conflict:
+                manager.create_job("MAINPC", "user@example.com")
+            assert boot_conflict.value.status_code == 409
+            assert boot_conflict.value.detail["error"] == "target_busy"
+            raise RuntimeError("command failed")
+
+    with manager.power_action("mainpc") as target:
+        assert target == "mainpc"
+
+
+def test_boot_reserves_target_until_cancelled_runner_finishes(tmp_path, monkeypatch):
+    manager = make_manager(tmp_path)
+    monkeypatch.setattr(boot_jobs.threading.Thread, "start", lambda _thread: None)
+    first = manager.create_job("mainpc", "user@example.com")
+    runner = manager._runners[first["id"]][0]
+
+    with pytest.raises(HTTPException) as active:
+        with manager.power_action("MAINPC"):
+            pytest.fail("power action must not interrupt a boot job")
+    assert active.value.status_code == 409
+    assert active.value.detail["error"] == "active_boot_job"
+    assert active.value.detail["job"]["id"] == first["id"]
+
+    manager.cancel_job(first["id"])
+    with pytest.raises(HTTPException) as finishing:
+        with manager.power_action("mainpc"):
+            pytest.fail("cancelled runner has not exited yet")
+    assert finishing.value.detail["error"] == "target_busy"
+    with pytest.raises(HTTPException) as retry:
+        manager.create_job("mainpc", "user@example.com")
+    assert retry.value.detail["error"] == "target_busy"
+
+    # A cancelled queued runner exits without any SSH or WOL operation.
+    monkeypatch.setattr(manager, "_probe_ubuntu", lambda: pytest.fail("cancelled job must not probe"))
+    runner.run()
+    with manager.power_action("mainpc"):
+        pass
+
+
+def test_failed_boot_runner_releases_target(tmp_path, monkeypatch):
+    manager = make_manager(tmp_path)
+    monkeypatch.setattr(boot_jobs.threading.Thread, "start", lambda thread: thread.run())
+
+    def fail_probe():
+        raise RuntimeError("unexpected probe failure")
+
+    monkeypatch.setattr(manager, "_probe_ubuntu", fail_probe)
+    job = manager.create_job("mainpc", "user@example.com")
+    assert manager.get_job(job["id"])["error_code"] == "internal_error"
+    with manager.power_action("mainpc"):
+        pass
+
+
+@pytest.mark.parametrize("mutation", ["delete", "rename"])
+@pytest.mark.parametrize("operation", ["boot", "power"])
+def test_target_is_resolved_after_a_concurrent_edit_finishes(tmp_path, monkeypatch, mutation, operation):
+    manager = make_manager(tmp_path)
+    original_lock = manager._lock
+
+    class EditBeforeAcquire:
+        """Complete another guarded request just before the next lock entry."""
+
+        pending_edit = True
+
+        def __enter__(self):
+            if self.pending_edit:
+                self.pending_edit = False
+                with manager.power_action("mainpc") as target:
+                    if mutation == "delete":
+                        targets.delete_target(target)
+                    else:
+                        targets.update_target(target, {"name": "renamed-pc"})
+            original_lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            original_lock.release()
+
+    monkeypatch.setattr(manager, "_lock", EditBeforeAcquire())
+    monkeypatch.setattr(boot_jobs.threading.Thread, "start", lambda _thread: None)
+    with pytest.raises(HTTPException) as exc_info:
+        if operation == "boot":
+            manager.create_job("mainpc", "user@example.com")
+        else:
+            with manager.power_action("mainpc"):
+                pytest.fail("a removed target must not be reserved")
+
+    assert exc_info.value.status_code == 404
+    assert manager.list_jobs() == []

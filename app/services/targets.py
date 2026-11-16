@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import errno
 import ipaddress
 import json
+import logging
+import math
+import os
 import platform
 import re
+import stat
 import subprocess
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +23,9 @@ from .logs import log_event
 
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+MAC_SEARCH_PATTERN = re.compile(r"(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])")
 
+_LOG = logging.getLogger(__name__)
 _TARGETS_LOCK = threading.Lock()
 _RUNTIME_STATE: Dict[str, Dict[str, Any]] = {}
 
@@ -49,8 +57,10 @@ def _validate_ip(ip: str) -> str:
 
 
 def _normalize_mac(mac: Optional[str]) -> Optional[str]:
-    if not mac:
+    if mac is None:
         return None
+    if not isinstance(mac, str):
+        raise HTTPException(400, detail="invalid mac address; use AA:BB:CC:DD:EE:FF")
     value = mac.strip()
     if not value:
         return None
@@ -63,16 +73,15 @@ def _normalize_mac(mac: Optional[str]) -> Optional[str]:
 def _ensure_file() -> None:
     TARGETS_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not TARGETS_FILE.exists():
-        state = {"targets": []}
-        TARGETS_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _save_state_locked({"targets": []})
 
 
 def _normalize_loaded_target(target: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not isinstance(target, dict):
         return None
-    raw_name = str(target.get("name", "")).strip()
-    raw_ip = str(target.get("ip", "")).strip()
-    if not raw_name or not raw_ip:
+    raw_name = target.get("name")
+    raw_ip = target.get("ip")
+    if not isinstance(raw_name, str) or not isinstance(raw_ip, str):
         return None
     try:
         name = _normalize_name(raw_name)
@@ -83,7 +92,7 @@ def _normalize_loaded_target(target: Dict[str, Any]) -> Optional[Dict[str, Any]]
     try:
         normalized_mac = _normalize_mac(mac)
     except HTTPException:
-        normalized_mac = None
+        return None
     sanitized: Dict[str, Any] = dict(target)
     sanitized["name"] = name
     sanitized["ip"] = ip
@@ -98,65 +107,87 @@ def _normalize_loaded_target(target: Dict[str, Any]) -> Optional[Dict[str, Any]]
 
 
 def _normalize_state(data: Any) -> Tuple[Dict[str, Any], bool]:
-    targets: List[Dict[str, Any]] = []
-    changed = False
-    if isinstance(data, dict) and "targets" in data and isinstance(data["targets"], list):
-        for item in data["targets"]:
-            normalized = _normalize_loaded_target(item)
-            if normalized is None:
-                changed = True
-                continue
-            if normalized != item:
-                changed = True
-            targets.append(normalized)
+    metadata: Dict[str, Any] = {}
+    if isinstance(data, dict) and "targets" in data:
+        if not isinstance(data["targets"], list):
+            raise HTTPException(503, detail={"error": "targets_file_invalid"})
+        entries = data["targets"]
+        metadata = data
     elif isinstance(data, dict):
-        changed = True
+        entries = []
         for name, item in data.items():
-            if isinstance(item, dict):
-                candidate = dict(item)
-                candidate.setdefault("name", name)
-                normalized = _normalize_loaded_target(candidate)
-                if normalized is not None:
-                    targets.append(normalized)
+            if not isinstance(item, dict):
+                raise HTTPException(503, detail={"error": "targets_file_invalid"})
+            candidate = dict(item)
+            candidate.setdefault("name", name)
+            entries.append(candidate)
     elif isinstance(data, list):
-        changed = True
-        for item in data:
-            normalized = _normalize_loaded_target(item)
-            if normalized is not None:
-                targets.append(normalized)
+        entries = data
     else:
-        changed = True
+        raise HTTPException(503, detail={"error": "targets_file_invalid"})
     unique: Dict[str, Dict[str, Any]] = {}
-    for item in targets:
-        unique[item["name"]] = item
-    ordered = list(sorted(unique.values(), key=lambda t: t["name"]))
-    return {"targets": ordered}, changed
+    for item in entries:
+        normalized = _normalize_loaded_target(item)
+        if normalized is None or normalized["name"] in unique:
+            raise HTTPException(503, detail={"error": "targets_file_invalid"})
+        unique[normalized["name"]] = normalized
+    state = {**metadata, "targets": sorted(unique.values(), key=lambda t: t["name"])}
+    return state, state != data
 
 
 def _load_state_locked() -> Dict[str, Any]:
     _ensure_file()
-    text = TARGETS_FILE.read_text(encoding="utf-8")
-    if not text.strip():
-        state = {"targets": []}
-        _save_state_locked(state)
-        return state
     try:
-        raw = json.loads(text)
-    except Exception:
-        state = {"targets": []}
-        _save_state_locked(state)
-        return state
+        text = TARGETS_FILE.read_text(encoding="utf-8-sig")
+        raw = json.loads(text, parse_constant=_reject_json_constant, parse_float=_finite_json_float)
+    except (ValueError, UnicodeError) as exc:
+        # Never replace a damaged or partially edited file with an empty list.
+        raise HTTPException(503, detail={"error": "targets_file_invalid"}) from exc
     state, changed = _normalize_state(raw)
     if changed:
         _save_state_locked(state)
     return state
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+
+def _finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("Non-finite JSON number")
+    return parsed
+
+
 def _save_state_locked(state: Dict[str, Any]) -> None:
     serialized = json.dumps(state, ensure_ascii=False, indent=2) + "\n"
-    temp_path = TARGETS_FILE.with_name(TARGETS_FILE.name + ".tmp")
-    Path(temp_path).write_text(serialized, encoding="utf-8")
-    Path(temp_path).replace(TARGETS_FILE)
+    temp_path: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=TARGETS_FILE.parent,
+            prefix=f".{TARGETS_FILE.name}.", suffix=".tmp", delete=False,
+        ) as stream:
+            temp_path = Path(stream.name)
+            if TARGETS_FILE.exists():
+                os.chmod(temp_path, stat.S_IMODE(TARGETS_FILE.stat().st_mode))
+            stream.write(serialized)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temp_path.replace(TARGETS_FILE)
+    except OSError as exc:
+        # The production Compose file bind-mounts targets.json into a read-only
+        # directory. Such mounts allow writes to the file but not replacement.
+        if exc.errno not in {errno.EBUSY, errno.EROFS, errno.EACCES, errno.EPERM} or not TARGETS_FILE.is_file():
+            raise
+        with TARGETS_FILE.open("r+", encoding="utf-8") as stream:
+            stream.write(serialized)
+            stream.truncate()
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _find_index(targets: List[Dict[str, Any]], name: str) -> int:
@@ -166,7 +197,7 @@ def _find_index(targets: List[Dict[str, Any]], name: str) -> int:
     return -1
 
 
-def _update_runtime(name: str, **fields: Any) -> None:
+def _update_runtime_locked(name: str, **fields: Any) -> None:
     entry = _RUNTIME_STATE.setdefault(name, {})
     entry.update(fields)
 
@@ -244,6 +275,7 @@ def update_target(original_name: str, payload: Dict[str, Any]) -> Dict[str, Any]
         if index == -1:
             raise HTTPException(404, detail="unknown target")
         target = dict(state["targets"][index])
+        original_ip = target.get("ip")
 
         if new_name is not None:
             normalized_new = _normalize_name(str(new_name))
@@ -258,7 +290,7 @@ def update_target(original_name: str, payload: Dict[str, Any]) -> Dict[str, Any]
         if ip is not None:
             target["ip"] = _validate_ip(str(ip))
 
-        if mac is not None:
+        if "mac" in payload:
             normalized_mac = _normalize_mac(mac)
             if normalized_mac:
                 target["mac"] = normalized_mac
@@ -274,6 +306,8 @@ def update_target(original_name: str, payload: Dict[str, Any]) -> Dict[str, Any]
         if normalized_original != normalized_new:
             if normalized_original in _RUNTIME_STATE:
                 _RUNTIME_STATE[normalized_new] = _RUNTIME_STATE.pop(normalized_original)
+        if target.get("ip") != original_ip:
+            _RUNTIME_STATE.pop(normalized_new, None)
     log_event({"evt": "target-update", "target": normalized_original, "updated": target.get("name")})
     return target
 
@@ -291,7 +325,9 @@ def delete_target(name: str) -> None:
     log_event({"evt": "target-delete", "target": normalized, "ip": removed.get("ip")})
 
 
-def set_target_mac(name: str, mac: str) -> Dict[str, Any]:
+def set_target_mac(
+    name: str, mac: str, *, expected_ip: Optional[str] = None, only_if_missing: bool = False,
+) -> Dict[str, Any]:
     normalized_mac = _normalize_mac(mac)
     normalized_name = _normalize_name(name)
     with _TARGETS_LOCK:
@@ -300,6 +336,10 @@ def set_target_mac(name: str, mac: str) -> Dict[str, Any]:
         if index == -1:
             raise HTTPException(404, detail="unknown target")
         target = dict(state["targets"][index])
+        if expected_ip is not None and target.get("ip") != expected_ip:
+            return target
+        if only_if_missing and target.get("mac"):
+            return target
         if target.get("mac") == normalized_mac:
             return target
         target["mac"] = normalized_mac
@@ -323,23 +363,49 @@ def discover_mac_for_ip(ip: str) -> Optional[str]:
             result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=3)
         except Exception:
             continue
-        output = f"{result.stdout}\n{result.stderr}".replace("-", ":").strip()
-        match = MAC_PATTERN.search(output)
-        if match:
-            return match.group(0).upper()
+        if result.returncode != 0:
+            continue
+        for line in (result.stdout or "").splitlines():
+            if not re.search(rf"(?<![\d.]){re.escape(ip)}(?![\d.])", line):
+                continue
+            match = MAC_SEARCH_PATTERN.search(line)
+            if match:
+                mac = _normalize_mac(match.group(0))
+                # ARP multicast/broadcast/unspecified entries cannot identify a PC.
+                if mac != "00:00:00:00:00:00" and not int(mac[:2], 16) & 1:
+                    return mac
     return None
 
 
 def record_status(name: str, online: bool, ip: Optional[str] = None) -> None:
-    _update_runtime(name, last_status_at=_now_ts(), online=online)
-    if online and ip:
+    normalized_name = _normalize_name(name)
+    with _TARGETS_LOCK:
+        state = _load_state_locked()
+        index = _find_index(state["targets"], normalized_name)
+        if index == -1:
+            return
+        target = state["targets"][index]
+        if ip is not None and target.get("ip") != ip:
+            return
+        _update_runtime_locked(normalized_name, last_status_at=_now_ts(), online=online)
+        learn_mac = online and ip and not target.get("mac")
+    if learn_mac:
         try:
             mac = discover_mac_for_ip(ip)
             if mac:
-                set_target_mac(name, mac)
+                set_target_mac(normalized_name, mac, expected_ip=ip, only_if_missing=True)
         except HTTPException:
             pass
 
 
 def record_wake(name: str) -> None:
-    _update_runtime(name, last_wake_at=_now_ts())
+    normalized_name = _normalize_name(name)
+    try:
+        with _TARGETS_LOCK:
+            state = _load_state_locked()
+            if _find_index(state["targets"], normalized_name) != -1:
+                _update_runtime_locked(normalized_name, last_wake_at=_now_ts())
+    except (OSError, HTTPException):
+        # The packet has already been sent; unavailable metadata must not turn a
+        # completed wake into an apparent failure and encourage another command.
+        _LOG.exception("Unable to record wake metadata for %s", normalized_name)

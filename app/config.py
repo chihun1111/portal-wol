@@ -26,7 +26,9 @@ def ping_once(ip: str) -> bool:
     else:
         cmd = ["ping", "-c", "1", "-W", "1", ip]
     try:
-        return subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+        return subprocess.call(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3,
+        ) == 0
     except Exception:
         return False
 

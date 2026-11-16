@@ -5,11 +5,12 @@ import { useLanguage } from '../../../_i18n/LanguageProvider';
 
 type ConfirmDeleteModalProps = {
   target: Target | null;
+  deleting: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 };
 
-export function ConfirmDeleteModal({ target, onConfirm, onCancel }: ConfirmDeleteModalProps) {
+export function ConfirmDeleteModal({ target, deleting, onConfirm, onCancel }: ConfirmDeleteModalProps) {
   const { t } = useLanguage();
 
   if (!target) {
@@ -32,10 +33,10 @@ export function ConfirmDeleteModal({ target, onConfirm, onCancel }: ConfirmDelet
         <h2 id="confirm-modal-title">{t('wol.confirmDelete.title')}</h2>
         <p>{t('wol.confirmDelete.message', { name: target.name })}</p>
         <div className="modal-actions">
-          <button type="button" className="btn danger" onClick={onConfirm}>
+          <button type="button" className="btn danger" onClick={onConfirm} disabled={deleting} data-loading={deleting ? 'true' : undefined}>
             {t('wol.confirmDelete.delete')}
           </button>
-          <button type="button" className="btn ghost" onClick={onCancel}>
+          <button type="button" className="btn ghost" onClick={onCancel} disabled={deleting}>
             {t('wol.confirmDelete.cancel')}
           </button>
         </div>
